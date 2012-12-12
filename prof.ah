@@ -1,0 +1,81 @@
+#ifndef __PROF_AH__
+#define __PROF_AH__
+
+#include <map>
+#include <ctime>
+#include <string>
+#include <cassert>
+#include <iostream>
+
+struct TRunningInfo {
+   time_t fStartTime;
+   unsigned long fReferenceCount;
+};
+
+struct TTotalInfo {
+   unsigned long fTotalTime;
+   unsigned long fCalls;
+   TTotalInfo(unsigned long totalTime, unsigned long calls) : fTotalTime(totalTime), fCalls(calls) { };
+};
+
+aspect TProfiler {
+   pointcut functions() = "% ...::%(...)";
+
+   advice execution(functions()) : before() {
+      TRunningInfo info;
+      time_t now = time(0);
+      std::string function = JoinPoint::signature();
+      std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
+
+      if (desc != fCurrent.end()) {
+         // Handle recursive calls
+         info = desc->second;
+      } else {
+         info.fStartTime = now;
+         info.fReferenceCount = 0;
+      }
+
+      ++info.fReferenceCount;
+      fCurrent.insert(desc, std::pair<std::string, TRunningInfo>(function, info));
+   }
+
+   advice execution(functions()) : after() {
+      TRunningInfo info;
+      time_t now = time(0);
+      std::string function = JoinPoint::signature();
+      std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
+
+      assert(desc != fCurrent.end());
+
+      info = desc->second;
+      --info.fReferenceCount;
+
+      // Are we done?
+      if (info.fReferenceCount == 0) {
+         std::map<std::string, TTotalInfo>::iterator tot = fTotal.find(function);
+
+         if (tot == fTotal.end()) {
+            TTotalInfo total(now - info.fStartTime, 1);
+            fTotal.insert(std::pair<std::string, TTotalInfo>(function, total));
+         } else {
+            tot->second.fTotalTime += (now - info.fStartTime);
+            ++tot->second.fCalls;
+         }
+      }
+   }
+
+   ~TProfiler() {
+      // Display data at the end
+      for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
+           tot != fTotal.end(); ++tot) {
+         std::cout << "Function: " << tot->first.c_str() << ", calls: " << tot->second.fCalls;
+         std::cout << ", total time: " << tot->second.fTotalTime << std::endl;
+      }
+   }
+
+private:
+   std::map<std::string, TRunningInfo> fCurrent;
+   std::map<std::string, TTotalInfo> fTotal;
+};
+
+#endif
