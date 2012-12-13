@@ -124,6 +124,8 @@ aspect TProfiler {
             ++tot->second.fCalls;
          }
 
+         // Not running any more
+         fCurrent.erase(desc);
          // Decrease level
          --fLevel;
          // Change parent
