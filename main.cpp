@@ -1,12 +1,16 @@
 #include <cmath>
 #include <iostream>
 
+double Sqrt(double x) {
+   return sqrt(x);
+}
+
 unsigned int FrequencyOfPrimes(unsigned int n) {
    unsigned int i, j;
    unsigned int freq = n - 1;
 
    for (i = 2; i <= n; ++i) {
-      for (j = sqrt(i); j > 1; --j) {
+      for (j = Sqrt(i); j > 1; --j) {
          if (i % j == 0) {
             --freq;
             break;
