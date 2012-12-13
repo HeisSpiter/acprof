@@ -153,8 +153,7 @@ aspect TProfiler {
             if (!child->fHasChild) {
                TCallInfo * parent = child;
                while (parent != 0) {
-                  std::string function = parent->fFunction;
-                  std::cout << function;
+                  std::cout << parent->fFunction;
 
                   parent = parent->fParent;
                   if (parent != 0) {
