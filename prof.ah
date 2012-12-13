@@ -139,6 +139,8 @@ aspect TProfiler {
    }
 
    ~TProfiler() {
+      std::cout << std::endl;
+
       // Display data at the end
       for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
            tot != fTotal.end(); ++tot) {
@@ -146,6 +148,8 @@ aspect TProfiler {
          std::cout << "Function: " << tot->first.c_str() << ", calls: " << tot->second.fCalls;
          std::cout << ", total ticks: " << tot->second.fTotalTicks << ", total time: " << totalTime << "s" << std::endl;
       }
+
+      std::cout << std::endl;
 
       // Display graphs at the end
       assert(fLevel == 0 && !fCalls.empty());
