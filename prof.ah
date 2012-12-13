@@ -23,8 +23,9 @@ struct TCallInfo {
    TCallInfo * fParent;
    TCallInfo * fNeighbor;
    std::string fFunction;
+   bool fHasChild;
    TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function) :
-      fParent(parent), fNeighbor(neighbor), fFunction(function) {};
+      fParent(parent), fNeighbor(neighbor), fFunction(function), fHasChild(false) {};
 };
 
 aspect TProfiler {
@@ -77,10 +78,14 @@ aspect TProfiler {
                   child->fNeighbor = same->fNeighbor;
                   same->fNeighbor = child;
                } else {
-                  fCalls.insert(fCalls.end(), fParent);
+                  fCalls.insert(fCalls.end(), child);
                }
+               // Ensure parent has child
+               fParent->fHasChild = true;
                // Jump level
                ++fLevel;
+               // Switch parent
+               fParent = child;
             }
          }
       } else {
@@ -90,7 +95,7 @@ aspect TProfiler {
          assert(fCalls.size() == 0);
 
          fParent = new TCallInfo(0, 0, function);
-         fCalls.insert(fCalls.begin(), fParent);
+         fCalls.insert(fCalls.end(), fParent);
          // Jump level
          ++fLevel;
       }
@@ -118,6 +123,11 @@ aspect TProfiler {
             tot->second.fTotalTime += (now - info.fStartTime);
             ++tot->second.fCalls;
          }
+
+         // Decrease level
+         --fLevel;
+         // Change parent
+         fParent = fParent->fParent;
       }
    }
 
@@ -132,6 +142,34 @@ aspect TProfiler {
            tot != fTotal.end(); ++tot) {
          std::cout << "Function: " << tot->first.c_str() << ", calls: " << tot->second.fCalls;
          std::cout << ", total time: " << tot->second.fTotalTime << std::endl;
+      }
+
+      // Display graphs at the end
+      assert(fLevel == 0 && !fCalls.empty());
+      for (int level = fCalls.size() - 1; level >= 0; --level) {
+         TCallInfo * child = fCalls[level];
+         while (child != 0) {
+            // No child -> display and head back
+            if (!child->fHasChild) {
+               TCallInfo * parent = child;
+               while (parent != 0) {
+                  std::string function = parent->fFunction;
+                  std::cout << function;
+
+                  parent = parent->fParent;
+                  if (parent != 0) {
+                     std::cout << " <- ";
+                  } else {
+                     std::cout << std::endl;
+                  }
+               }
+            }
+
+            // Release and go to the next
+            TCallInfo * next = child->fNeighbor;
+            delete child;
+            child = next;
+         }
       }
    }
 
