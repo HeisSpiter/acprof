@@ -2,6 +2,7 @@
 #define __PROF_AH__
 
 #include <map>
+#include <vector>
 #include <ctime>
 #include <string>
 #include <cassert>
@@ -16,6 +17,14 @@ struct TTotalInfo {
    unsigned long fTotalTime;
    unsigned long fCalls;
    TTotalInfo(unsigned long totalTime, unsigned long calls) : fTotalTime(totalTime), fCalls(calls) { };
+};
+
+struct TCallInfo {
+   TCallInfo * fParent;
+   TCallInfo * fNeighbor;
+   std::string fFunction;
+   TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function) :
+      fParent(parent), fNeighbor(neighbor), fFunction(function) {};
 };
 
 aspect TProfiler {
@@ -37,6 +46,54 @@ aspect TProfiler {
 
       ++info.fReferenceCount;
       fCurrent.insert(desc, std::pair<std::string, TRunningInfo>(function, info));
+
+      // Complete call graph
+      if (fParent) {
+         // We're not a level 0
+         assert(fLevel > 0);
+
+         // Only insert if not recursive call
+         if (function != fParent->fFunction) {
+            // Check whether we are already in
+            TCallInfo * child = 0;
+            if (fCalls.size() > fLevel + 1) {
+               child = fCalls[fLevel];
+            }
+
+            // Browse every possible entry
+            if (child) {
+               for (; child; child = child->fNeighbor) {
+                  if (child->fFunction == function) {
+                     break;
+                  }
+               }
+            }
+
+            // Now, we have a room for insertion
+            if (child == 0) {
+               child = new TCallInfo(fParent, 0, function);
+               if (fCalls.size() > fLevel + 1) {
+                  TCallInfo * same = fCalls[fLevel];
+                  child->fNeighbor = same->fNeighbor;
+                  same->fNeighbor = child;
+               } else {
+                  fCalls.insert(fCalls.end(), fParent);
+               }
+               // Jump level
+               ++fLevel;
+            }
+         }
+      } else {
+         // If no parent -> level == 0
+         assert(fLevel == 0);
+         // Also means no child
+         assert(fCalls.size() == 0);
+
+         fParent = new TCallInfo(0, 0, function);
+         fCalls.insert(fCalls.begin(), fParent);
+         // Jump level
+         ++fLevel;
+      }
    }
 
    advice execution(functions()) : after() {
@@ -64,6 +121,11 @@ aspect TProfiler {
       }
    }
 
+   TProfiler() {
+      fLevel = 0;
+      fParent = 0;
+   }
+
    ~TProfiler() {
       // Display data at the end
       for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
@@ -76,6 +138,9 @@ aspect TProfiler {
 private:
    std::map<std::string, TRunningInfo> fCurrent;
    std::map<std::string, TTotalInfo> fTotal;
+   std::vector<TCallInfo *> fCalls;
+   unsigned int fLevel;
+   TCallInfo * fParent;
 };
 
 #endif
