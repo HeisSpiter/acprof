@@ -32,21 +32,19 @@ aspect TProfiler {
    pointcut functions() = "% ...::%(...)";
 
    advice execution(functions()) : before() {
-      TRunningInfo info;
       clock_t now = clock();
       std::string function = JoinPoint::signature();
       std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
 
       if (desc != fCurrent.end()) {
          // Handle recursive calls
-         info = desc->second;
+         ++(desc->second.fReferenceCount);
       } else {
+         TRunningInfo info;
          info.fStartTicks = now;
-         info.fReferenceCount = 0;
+         info.fReferenceCount = 1;
+         fCurrent.insert(desc, std::pair<std::string, TRunningInfo>(function, info));
       }
-
-      ++info.fReferenceCount;
-      fCurrent.insert(desc, std::pair<std::string, TRunningInfo>(function, info));
 
       // Complete call graph
       if (fParent) {
@@ -57,13 +55,13 @@ aspect TProfiler {
          if (function != fParent->fFunction) {
             // Check whether we are already in
             TCallInfo * child = 0;
-            if (fCalls.size() > fLevel + 1) {
+            if (fCalls.size() > fLevel) {
                child = fCalls[fLevel];
             }
 
             // Browse every possible entry
             if (child) {
-               for (; child; child = child->fNeighbor) {
+               for (; child != 0; child = child->fNeighbor) {
                   if (child->fFunction == function) {
                      break;
                   }
@@ -73,20 +71,22 @@ aspect TProfiler {
             // Now, we have a room for insertion
             if (child == 0) {
                child = new TCallInfo(fParent, 0, function);
-               if (fCalls.size() > fLevel + 1) {
+               if (fCalls.size() > fLevel) {
                   TCallInfo * same = fCalls[fLevel];
                   child->fNeighbor = same->fNeighbor;
                   same->fNeighbor = child;
                } else {
                   fCalls.insert(fCalls.end(), child);
                }
+
                // Ensure parent has child
                fParent->fHasChild = true;
-               // Jump level
-               ++fLevel;
-               // Switch parent
-               fParent = child;
             }
+
+            // In any case, jump level
+            ++fLevel;
+            // Switch parent
+            fParent = child;
          }
       } else {
          // If no parent -> level == 0
