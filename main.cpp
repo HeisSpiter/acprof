@@ -17,14 +17,23 @@ unsigned int FrequencyOfPrimes(unsigned int n) {
    return freq;
 }
 
-int main(int argc, char **argv) {
+unsigned int AskMax() {
    unsigned int max;
 
    std::cout << "You want number of primes lower than? ";
    std::cin >> max;
    if (max < 2) {
       std::cout << "Forcing to 2" << std::endl;
+      max = 2;
    }
+
+   return max;
+}
+
+int main(int argc, char **argv) {
+   unsigned int max;
+
+   max = AskMax();
    std::cout << "Result: " << FrequencyOfPrimes(max) << std::endl;
    return 0;
 }
