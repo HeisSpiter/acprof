@@ -9,14 +9,14 @@
 #include <iostream>
 
 struct TRunningInfo {
-   time_t fStartTime;
+   clock_t fStartTicks;
    unsigned long fReferenceCount;
 };
 
 struct TTotalInfo {
-   unsigned long fTotalTime;
+   unsigned long fTotalTicks;
    unsigned long fCalls;
-   TTotalInfo(unsigned long totalTime, unsigned long calls) : fTotalTime(totalTime), fCalls(calls) { };
+   TTotalInfo(unsigned long totalTicks, unsigned long calls) : fTotalTicks(totalTicks), fCalls(calls) { };
 };
 
 struct TCallInfo {
@@ -33,7 +33,7 @@ aspect TProfiler {
 
    advice execution(functions()) : before() {
       TRunningInfo info;
-      time_t now = time(0);
+      clock_t now = clock();
       std::string function = JoinPoint::signature();
       std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
 
@@ -41,7 +41,7 @@ aspect TProfiler {
          // Handle recursive calls
          info = desc->second;
       } else {
-         info.fStartTime = now;
+         info.fStartTicks = now;
          info.fReferenceCount = 0;
       }
 
@@ -103,7 +103,7 @@ aspect TProfiler {
 
    advice execution(functions()) : after() {
       TRunningInfo info;
-      time_t now = time(0);
+      clock_t now = clock();
       std::string function = JoinPoint::signature();
       std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
 
@@ -117,10 +117,10 @@ aspect TProfiler {
          std::map<std::string, TTotalInfo>::iterator tot = fTotal.find(function);
 
          if (tot == fTotal.end()) {
-            TTotalInfo total(now - info.fStartTime, 1);
+            TTotalInfo total(now - info.fStartTicks, 1);
             fTotal.insert(std::pair<std::string, TTotalInfo>(function, total));
          } else {
-            tot->second.fTotalTime += (now - info.fStartTime);
+            tot->second.fTotalTicks += (now - info.fStartTicks);
             ++tot->second.fCalls;
          }
 
@@ -140,8 +140,9 @@ aspect TProfiler {
       // Display data at the end
       for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
            tot != fTotal.end(); ++tot) {
+         double totalTime = ((double)tot->second.fTotalTicks)/CLOCKS_PER_SEC;
          std::cout << "Function: " << tot->first.c_str() << ", calls: " << tot->second.fCalls;
-         std::cout << ", total time: " << tot->second.fTotalTime << std::endl;
+         std::cout << ", total ticks: " << tot->second.fTotalTicks << ", total time: " << totalTime << "s" << std::endl;
       }
 
       // Display graphs at the end
