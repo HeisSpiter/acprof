@@ -11,6 +11,7 @@
 struct TRunningInfo {
    clock_t fStartTicks;
    unsigned long fReferenceCount;
+   unsigned long fCalls;
 };
 
 struct TTotalInfo {
@@ -39,10 +40,12 @@ aspect TProfiler {
       if (desc != fCurrent.end()) {
          // Handle recursive calls
          ++(desc->second.fReferenceCount);
+         ++(desc->second.fCalls);
       } else {
          TRunningInfo info;
          info.fStartTicks = now;
          info.fReferenceCount = 1;
+         info.fCalls = 1;
          fCurrent.insert(desc, std::pair<std::string, TRunningInfo>(function, info));
       }
 
@@ -117,11 +120,11 @@ aspect TProfiler {
          std::map<std::string, TTotalInfo>::iterator tot = fTotal.find(function);
 
          if (tot == fTotal.end()) {
-            TTotalInfo total(now - info.fStartTicks, 1);
+            TTotalInfo total(now - info.fStartTicks, info.fCalls);
             fTotal.insert(std::pair<std::string, TTotalInfo>(function, total));
          } else {
             tot->second.fTotalTicks += (now - info.fStartTicks);
-            ++tot->second.fCalls;
+            tot->second.fCalls += info.fCalls;
          }
 
          // Not running any more
