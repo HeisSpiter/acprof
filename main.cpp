@@ -5,6 +5,10 @@ double Sqrt(double x) {
    return sqrt(x);
 }
 
+unsigned long Factorial(unsigned char n) {
+   return ((n == 0) ? 1 : n * Factorial(n - 1));
+}
+
 unsigned int FrequencyOfPrimes(unsigned int n) {
    unsigned int i, j;
    unsigned int freq = n - 1;
@@ -21,10 +25,10 @@ unsigned int FrequencyOfPrimes(unsigned int n) {
    return freq;
 }
 
-unsigned int AskMax() {
+unsigned int AskMax(const std::string & sentence) {
    unsigned int max;
 
-   std::cout << "You want number of primes lower than? ";
+   std::cout << sentence;
    std::cin >> max;
    if (max < 2) {
       std::cout << "Forcing to 2" << std::endl;
@@ -37,7 +41,11 @@ unsigned int AskMax() {
 int main(int argc, char **argv) {
    unsigned int max;
 
-   max = AskMax();
+   max = AskMax("You want number of primes lower than? ");
    std::cout << "Result: " << FrequencyOfPrimes(max) << std::endl;
+
+   max = AskMax("You want factorial of? ");
+   std::cout << "Result: " << Factorial(max) << std::endl;
+
    return 0;
 }
