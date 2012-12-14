@@ -109,8 +109,8 @@ aspect TProfiler {
 
       assert(desc != fCurrent.end());
 
+      --(desc->second.fReferenceCount);
       info = desc->second;
-      --info.fReferenceCount;
 
       // Are we done?
       if (info.fReferenceCount == 0) {
@@ -139,6 +139,8 @@ aspect TProfiler {
    }
 
    ~TProfiler() {
+      assert(fCurrent.empty());
+
       std::cout << std::endl;
 
       // Display data at the end
