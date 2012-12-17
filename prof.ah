@@ -6,6 +6,7 @@
 #include <vector>
 #include <ctime>
 #include <string>
+#include <cstring>
 #include <cassert>
 #include <iostream>
 
@@ -159,8 +160,8 @@ aspect TProfiler {
 
       for (int i = 0, pos = 0; i < fOldArgc; ++i) {
          // Check for our args
-         if (strncmp(fOldArgv[i], "--acprof-out=", 13)) {
-            if (strncmp(fOldArgv[i] + 13, "callgrind", 9)) {
+         if (strncmp(fOldArgv[i], "--acprof-out=", 13) == 0) {
+            if (strncmp(fOldArgv[i] + 13, "callgrind", 9) == 0) {
                std::cout << "Will use callgrind format output" << std::endl;
                fFormat = kCallgrind;
             }
@@ -235,22 +236,6 @@ aspect TProfiler {
    }
 
 private:
-   bool strncmp(const char * str1, const char * str2, size_t num) {
-      size_t i = 0;
-      while (i < num) {
-         if (!*str1 || !*str2) {
-            return false;
-         }
-         if (*str1 != *str2) {
-            return false;
-         }
-         ++i;
-         ++str1;
-         ++str2;
-      }
-      return true;
-   }
-
    std::map<std::string, TRunningInfo> fCurrent;
    std::map<std::string, TTotalInfo> fTotal;
    std::vector<TCallInfo *> fCalls;
