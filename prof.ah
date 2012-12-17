@@ -8,7 +8,11 @@
 #include <string>
 #include <cstring>
 #include <cassert>
+#include <sstream>
+#include <fstream>
+#include <unistd.h>
 #include <iostream>
+#include <sys/types.h>
 
 struct TRunningInfo {
    clock_t fStartTicks;
@@ -26,9 +30,10 @@ struct TCallInfo {
    TCallInfo * fParent;
    TCallInfo * fNeighbor;
    std::string fFunction;
+   std::string fFile;
    bool fHasChild;
-   TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function) :
-      fParent(parent), fNeighbor(neighbor), fFunction(function), fHasChild(false) {};
+   TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file) :
+      fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fHasChild(false) {};
 };
 
 enum EOutput {
@@ -43,8 +48,9 @@ aspect TProfiler {
    pointcut profiler() = "% TProfiler::%(...)";
 
    advice execution(functions() && !profiler()) : before() {
-      clock_t now = clock();
-      std::string function = JoinPoint::signature();
+      const clock_t now = clock();
+      const std::string file = JoinPoint::filename();
+      const std::string function = JoinPoint::signature();
       std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
 
       if (desc != fCurrent.end()) {
@@ -83,7 +89,7 @@ aspect TProfiler {
 
             // Now, we have a room for insertion
             if (child == 0) {
-               child = new TCallInfo(fParent, 0, function);
+               child = new TCallInfo(fParent, 0, function, file);
                if (fCalls.size() > fLevel) {
                   TCallInfo * same = fCalls[fLevel];
                   child->fNeighbor = same->fNeighbor;
@@ -107,7 +113,7 @@ aspect TProfiler {
          // Also means no child
          assert(fCalls.size() == 0);
 
-         fParent = new TCallInfo(0, 0, function);
+         fParent = new TCallInfo(0, 0, function, file);
          fCalls.insert(fCalls.end(), fParent);
          // Jump level
          ++fLevel;
@@ -195,43 +201,54 @@ aspect TProfiler {
    ~TProfiler() {
       assert(fCurrent.empty());
 
-      std::cout << std::endl;
+      if (fFormat == kStdOut) {
+         std::cout << std::endl;
 
-      // Display data at the end
-      for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
-           tot != fTotal.end(); ++tot) {
-         double totalTime = ((double)tot->second.fTotalTicks)/CLOCKS_PER_SEC;
-         std::cout << "Function: " << tot->first.c_str() << ", calls: " << tot->second.fCalls;
-         std::cout << ", total ticks: " << tot->second.fTotalTicks << ", total time: " << totalTime << "s" << std::endl;
-      }
+         // Display data at the end
+         for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
+              tot != fTotal.end(); ++tot) {
+            double totalTime = ((double)tot->second.fTotalTicks)/CLOCKS_PER_SEC;
+            std::cout << "Function: " << tot->first.c_str() << ", calls: " << tot->second.fCalls;
+            std::cout << ", total ticks: " << tot->second.fTotalTicks << ", total time: " << totalTime << "s" << std::endl;
+         }
 
-      std::cout << std::endl;
+         std::cout << std::endl;
 
-      // Display graphs at the end
-      assert(fLevel == 0 && !fCalls.empty());
-      for (int level = fCalls.size() - 1; level >= 0; --level) {
-         TCallInfo * child = fCalls[level];
-         while (child != 0) {
-            // No child -> display and head back
-            if (!child->fHasChild) {
-               TCallInfo * parent = child;
-               while (parent != 0) {
-                  std::cout << parent->fFunction;
+         // Display graphs at the end
+         assert(fLevel == 0 && !fCalls.empty());
+         for (int level = fCalls.size() - 1; level >= 0; --level) {
+            TCallInfo * child = fCalls[level];
+            while (child != 0) {
+               // No child -> display and head back
+               if (!child->fHasChild) {
+                  TCallInfo * parent = child;
+                  while (parent != 0) {
+                     std::cout << parent->fFunction;
 
-                  parent = parent->fParent;
-                  if (parent != 0) {
-                     std::cout << " <- ";
-                  } else {
-                     std::cout << std::endl;
+                     parent = parent->fParent;
+                     if (parent != 0) {
+                        std::cout << " <- ";
+                     } else {
+                        std::cout << std::endl;
+                     }
                   }
                }
-            }
 
-            // Release and go to the next
-            TCallInfo * next = child->fNeighbor;
-            delete child;
-            child = next;
+               // Release and go to the next
+               TCallInfo * next = child->fNeighbor;
+               delete child;
+               child = next;
+            }
          }
+      }  else {
+         std::ofstream outFile;
+         std::stringstream file;
+         int pid = getpid();
+
+         // Get output file name
+         file << "callgrind.out." << pid;
+         outFile.open(file.str().c_str());
+         outFile.close();
       }
    }
 
