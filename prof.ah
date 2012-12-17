@@ -3,6 +3,7 @@
 
 #include <new>
 #include <map>
+#include <stack>
 #include <vector>
 #include <ctime>
 #include <string>
@@ -203,13 +204,14 @@ aspect TProfiler {
    }
 
    ~TProfiler() {
+      assert(fLevel == 0);
+
       if (fFormat == kStdOut) {
          std::cout << std::endl;
 
          std::map<std::string, TTotalInfo> total;
 
          // Display graphs at the end
-         assert(fLevel == 0);
          for (int level = fCalls.size() - 1; level >= 0; --level) {
             TCallInfo * child = fCalls[level];
             while (child != 0) {
@@ -265,13 +267,47 @@ aspect TProfiler {
          outFile.open(file.str().c_str());
 
          outFile << "events: ticks" << std::endl;
-#if 0
-         for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
-              tot != fTotal.end(); ++tot) {
-            outFile << "fn=" << tot->first << std::endl;
-            outFile << "0 " << tot->second.fTotalTicks << std::endl;
+
+         for (int level = fCalls.size() - 1; level >= 0; --level) {
+            std::stack<TCallInfo *> callStack;
+
+            TCallInfo * child = fCalls[level];
+            while (child != 0) {	
+               if (!child->fHasChild) {
+                  TCallInfo * parent = child;
+                  while (parent != 0) {
+                     callStack.push(parent);
+                     parent = parent->fParent;
+                  }
+               }
+
+               bool first = true;
+               std::string lastFile = "";
+               while (!callStack.empty()) {
+                  TCallInfo * inChild = callStack.top();
+                  if (first) {
+                     outFile << "fl=" << inChild->fFile << std::endl;
+                     outFile << "fn=" << inChild->fFunction << std::endl;
+                     lastFile = inChild->fFile;
+                     first = false;
+                  } else {
+                     if (lastFile != inChild->fFile) {
+                        outFile << "cfl=" << inChild->fFile << std::endl;
+                        lastFile = inChild->fFile;
+                     }
+                     outFile << "cfn=" << inChild->fFunction << std::endl;
+                     outFile << "calls=" << inChild->fCalls << std::endl;
+                  }
+                  outFile << inChild->fLine << " " << inChild->fTotalTicks << std::endl;
+                  callStack.pop();
+               }
+
+               // Release and go to the next
+               TCallInfo * next = child->fNeighbor;
+               delete child;
+               child = next;
+            }
          }
-#endif
 
          outFile.close();
       }
