@@ -200,6 +200,7 @@ aspect TProfiler {
 
    ~TProfiler() {
       assert(fLevel == 0);
+      assert(!fCalls.empty());
 
       if (fFormat == kStdOut) {
          std::cout << std::endl;
@@ -277,11 +278,15 @@ aspect TProfiler {
 
          outFile << "events: ticks" << std::endl;
 
+         // Output summary (ie, total events)
+         TCallInfo * child = fCalls[0];
+         outFile << "summary: " << child->fTotalTicks << std::endl;
+
          for (int level = fCalls.size() - 1; level >= 0; --level) {
             std::stack<TCallInfo *> callStack;
 
             // Get call stack
-            TCallInfo * child = fCalls[level];
+            child = fCalls[level];
             while (child != 0) {	
                if (!child->fHasChild) {
                   TCallInfo * parent = child;
