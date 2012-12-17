@@ -14,12 +14,6 @@
 #include <iostream>
 #include <sys/types.h>
 
-struct TRunningInfo {
-   clock_t fStartTicks;
-   unsigned long fReferenceCount;
-   unsigned long fCalls;
-};
-
 struct TTotalInfo {
    unsigned long fTotalTicks;
    unsigned long fCalls;
@@ -33,8 +27,13 @@ struct TCallInfo {
    std::string fFile;
    int fLine;
    bool fHasChild;
-   TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line) :
-      fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fHasChild(false) {};
+   unsigned long fCalls;
+   unsigned long fTotalTicks;
+   clock_t fStartTicks;
+   unsigned long fReferenceCount;
+   TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line, clock_t startTicks) :
+      fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fHasChild(false), fCalls(1),
+      fTotalTicks(0), fStartTicks(startTicks), fReferenceCount(1) {};
 };
 
 enum EOutput {
@@ -53,19 +52,6 @@ aspect TProfiler {
       const int line = JoinPoint::line();
       const std::string file = JoinPoint::filename();
       const std::string function = JoinPoint::signature();
-      std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
-
-      if (desc != fCurrent.end()) {
-         // Handle recursive calls
-         ++(desc->second.fReferenceCount);
-         ++(desc->second.fCalls);
-      } else {
-         TRunningInfo info;
-         info.fStartTicks = now;
-         info.fReferenceCount = 1;
-         info.fCalls = 1;
-         fCurrent.insert(desc, std::pair<std::string, TRunningInfo>(function, info));
-      }
 
       // Complete call graph
       if (fParent) {
@@ -84,6 +70,11 @@ aspect TProfiler {
             if (child) {
                for (; child != 0; child = child->fNeighbor) {
                   if (child->fFunction == function) {
+                     assert(child->fStartTicks == -1);
+                     // Increase number of calls
+                     ++child->fCalls;
+                     child->fStartTicks = now;
+                     ++child->fReferenceCount;
                      break;
                   }
                }
@@ -91,7 +82,7 @@ aspect TProfiler {
 
             // Now, we have a room for insertion
             if (child == 0) {
-               child = new TCallInfo(fParent, 0, function, file, line);
+               child = new TCallInfo(fParent, 0, function, file, line, now);
                if (fCalls.size() > fLevel) {
                   TCallInfo * same = fCalls[fLevel];
                   child->fNeighbor = same->fNeighbor;
@@ -108,6 +99,11 @@ aspect TProfiler {
             ++fLevel;
             // Switch parent
             fParent = child;
+         } else {
+            // Increase number of calls
+            ++fParent->fCalls;
+            // Increment reference count
+            ++fParent->fReferenceCount;
          }
       } else {
          // If no parent -> level == 0
@@ -115,7 +111,7 @@ aspect TProfiler {
          // Also means no child
          assert(fCalls.size() == 0);
 
-         fParent = new TCallInfo(0, 0, function, file, line);
+         fParent = new TCallInfo(0, 0, function, file, line, now);
          fCalls.insert(fCalls.end(), fParent);
          // Jump level
          ++fLevel;
@@ -123,30 +119,30 @@ aspect TProfiler {
    }
 
    advice execution(functions() && !profiler()) : after() {
-      TRunningInfo info;
       clock_t now = clock();
+      TCallInfo * child = 0;
       std::string function = JoinPoint::signature();
-      std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
 
-      assert(desc != fCurrent.end());
+      // Find ourselves
+      assert(fCalls.size() > fLevel - 1);
+      child = fCalls[fLevel - 1];
+      for (; child != 0; child = child->fNeighbor) {
+         if (child->fFunction == function) {
+            break;
+         }
+      }
 
-      --(desc->second.fReferenceCount);
-      info = desc->second;
+      assert(child != 0);
+      assert(child->fStartTicks != -1);
+      assert(child->fReferenceCount);
+
+      --child->fReferenceCount;
 
       // Are we done?
-      if (info.fReferenceCount == 0) {
-         std::map<std::string, TTotalInfo>::iterator tot = fTotal.find(function);
+      if (child->fReferenceCount == 0) {
+         child->fTotalTicks += (now - child->fStartTicks);
+         child->fStartTicks = -1;
 
-         if (tot == fTotal.end()) {
-            TTotalInfo total(now - info.fStartTicks, info.fCalls);
-            fTotal.insert(std::pair<std::string, TTotalInfo>(function, total));
-         } else {
-            tot->second.fTotalTicks += (now - info.fStartTicks);
-            tot->second.fCalls += info.fCalls;
-         }
-
-         // Not running any more
-         fCurrent.erase(desc);
          // Decrease level
          --fLevel;
          // Change parent
@@ -207,23 +203,13 @@ aspect TProfiler {
    }
 
    ~TProfiler() {
-      assert(fCurrent.empty());
-
       if (fFormat == kStdOut) {
          std::cout << std::endl;
 
-         // Display data at the end
-         for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
-              tot != fTotal.end(); ++tot) {
-            double totalTime = ((double)tot->second.fTotalTicks)/CLOCKS_PER_SEC;
-            std::cout << "Function: " << tot->first.c_str() << ", calls: " << tot->second.fCalls;
-            std::cout << ", total ticks: " << tot->second.fTotalTicks << ", total time: " << totalTime << "s" << std::endl;
-         }
-
-         std::cout << std::endl;
+         std::map<std::string, TTotalInfo> total;
 
          // Display graphs at the end
-         assert(fLevel == 0 && !fCalls.empty());
+         assert(fLevel == 0);
          for (int level = fCalls.size() - 1; level >= 0; --level) {
             TCallInfo * child = fCalls[level];
             while (child != 0) {
@@ -242,12 +228,33 @@ aspect TProfiler {
                   }
                }
 
+               // Compute total resources
+               std::map<std::string, TTotalInfo>::iterator tot = total.find(child->fFunction);
+               if (tot != total.end()) {
+                  tot->second.fCalls += child->fCalls;
+                  tot->second.fTotalTicks += child->fTotalTicks;
+               } else {
+                  TTotalInfo tot(child->fTotalTicks, child->fCalls);
+                  total.insert(std::pair<std::string, TTotalInfo>(child->fFunction, tot));
+               }
+
                // Release and go to the next
                TCallInfo * next = child->fNeighbor;
                delete child;
                child = next;
             }
          }
+
+         std::cout << std::endl;
+
+         // Display data at the end
+         for (std::map<std::string, TTotalInfo>::const_iterator tot = total.begin();
+              tot != total.end(); ++tot) {
+            double totalTime = ((double)tot->second.fTotalTicks)/CLOCKS_PER_SEC;
+            std::cout << "Function: " << tot->first.c_str() << ", calls: " << tot->second.fCalls;
+            std::cout << ", total ticks: " << tot->second.fTotalTicks << ", total time: " << totalTime << "s" << std::endl;
+         }
+
       }  else {
          std::ofstream outFile;
          std::stringstream file;
@@ -258,19 +265,19 @@ aspect TProfiler {
          outFile.open(file.str().c_str());
 
          outFile << "events: ticks" << std::endl;
+#if 0
          for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
               tot != fTotal.end(); ++tot) {
             outFile << "fn=" << tot->first << std::endl;
             outFile << "0 " << tot->second.fTotalTicks << std::endl;
          }
+#endif
 
          outFile.close();
       }
    }
 
 private:
-   std::map<std::string, TRunningInfo> fCurrent;
-   std::map<std::string, TTotalInfo> fTotal;
    std::vector<TCallInfo *> fCalls;
    unsigned int fLevel;
    TCallInfo * fParent;
