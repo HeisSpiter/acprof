@@ -121,28 +121,20 @@ aspect TProfiler {
 
    advice execution(functions() && !profiler()) : after() {
       clock_t now = clock();
-      TCallInfo * child = 0;
       std::string function = JoinPoint::signature();
 
-      // Find ourselves
-      assert(fCalls.size() > fLevel - 1);
-      child = fCalls[fLevel - 1];
-      for (; child != 0; child = child->fNeighbor) {
-         if (child->fFunction == function) {
-            break;
-         }
-      }
+      assert(fParent != 0);
+      assert(fParent->fStartTicks != -1);
+      assert(fParent->fReferenceCount);
 
-      assert(child != 0);
-      assert(child->fStartTicks != -1);
-      assert(child->fReferenceCount);
-
-      --child->fReferenceCount;
+      --fParent->fReferenceCount;
 
       // Are we done?
-      if (child->fReferenceCount == 0) {
-         child->fTotalTicks += (now - child->fStartTicks);
-         child->fStartTicks = -1;
+      if (fParent->fReferenceCount == 0) {
+         assert(now >= fParent->fStartTicks);
+
+         fParent->fTotalTicks += (now - fParent->fStartTicks);
+         fParent->fStartTicks = -1;
 
          // Decrease level
          --fLevel;
