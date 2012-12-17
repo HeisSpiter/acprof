@@ -156,6 +156,9 @@ aspect TProfiler {
       int * argc = (int *)tjp->arg(0);
       char *** argv = (char ***)tjp->arg(1);
 
+      assert(argc != 0);
+      assert(argv != 0);
+
       // Save call values
       fOldArgc = *argc;
       fOldArgv = *argv;
@@ -183,6 +186,9 @@ aspect TProfiler {
    advice execution(mainargs()) : after() {
       int * argc = (int *)tjp->arg(0);
       char *** argv = (char ***)tjp->arg(1);
+
+      assert(argc != 0);
+      assert(argv != 0);
 
       // Restore values
       *argc = fOldArgc;
