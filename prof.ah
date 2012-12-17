@@ -158,7 +158,8 @@ aspect TProfiler {
       *argv = (char **)operator new(fOldArgc * sizeof(void *));
       fNewArgv = *argv;
 
-      for (int i = 0, pos = 0; i < fOldArgc; ++i) {
+      int pos = 0;
+      for (int i = 0; i < fOldArgc; ++i) {
          // Check for our args
          if (strncmp(fOldArgv[i], "--acprof-out=", 13) == 0) {
             if (strncmp(fOldArgv[i] + 13, "callgrind", 9) == 0) {
@@ -172,6 +173,11 @@ aspect TProfiler {
             ++pos;
          }
       }
+
+      // Zero the rest
+      for (; pos < fOldArgc; ++pos) {
+         (*argv)[pos] = 0;
+      }
    }
 
    advice execution(mainargs()) : after() {
@@ -184,9 +190,6 @@ aspect TProfiler {
       // Restore values
       *argc = fOldArgc;
       *argv = fOldArgv;
-
-      // Release memory
-      delete fNewArgv;
    }
 
    TProfiler() {
@@ -259,6 +262,16 @@ aspect TProfiler {
          outFile.open(file.str().c_str());
 
          outFile << "pid: " << pid << std::endl;
+
+         outFile << "cmd:";
+         for (int i = 0; i < fOldArgc; ++i) {
+            if (fNewArgv[i] == 0) {
+               break;
+            }
+            outFile << " " << fNewArgv[i];
+         }
+         outFile << std::endl;
+
          outFile << "events: ticks" << std::endl;
 
          for (int level = fCalls.size() - 1; level >= 0; --level) {
@@ -304,6 +317,8 @@ aspect TProfiler {
 
          outFile.close();
       }
+
+      delete fNewArgv;
    }
 
 private:
