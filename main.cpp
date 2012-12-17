@@ -41,6 +41,10 @@ unsigned int AskMax(const std::string & sentence) {
 int main(int argc, char **argv) {
    unsigned int max;
 
+   for (int i = 0; i < argc; ++i) {
+      std::cout << "Arg " << i << ": " << argv[i] << std::endl;
+   }
+
    max = AskMax("You want number of primes lower than? ");
    std::cout << "Result: " << FrequencyOfPrimes(max) << std::endl;
 
