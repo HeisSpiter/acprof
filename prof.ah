@@ -258,6 +258,7 @@ aspect TProfiler {
          file << "callgrind.out." << pid;
          outFile.open(file.str().c_str());
 
+         outFile << "pid: " << pid << std::endl;
          outFile << "events: ticks" << std::endl;
 
          for (int level = fCalls.size() - 1; level >= 0; --level) {
