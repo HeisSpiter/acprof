@@ -258,7 +258,11 @@ aspect TProfiler {
          outFile.open(file.str().c_str());
 
          outFile << "events: ticks" << std::endl;
-         
+         for (std::map<std::string, TTotalInfo>::const_iterator tot = fTotal.begin();
+              tot != fTotal.end(); ++tot) {
+            outFile << "fn=" << tot->first << std::endl;
+            outFile << "0 " << tot->second.fTotalTicks << std::endl;
+         }
 
          outFile.close();
       }
