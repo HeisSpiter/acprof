@@ -31,9 +31,10 @@ struct TCallInfo {
    TCallInfo * fNeighbor;
    std::string fFunction;
    std::string fFile;
+   int fLine;
    bool fHasChild;
-   TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file) :
-      fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fHasChild(false) {};
+   TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line) :
+      fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fHasChild(false) {};
 };
 
 enum EOutput {
@@ -49,6 +50,7 @@ aspect TProfiler {
 
    advice execution(functions() && !profiler()) : before() {
       const clock_t now = clock();
+      const int line = JoinPoint::line();
       const std::string file = JoinPoint::filename();
       const std::string function = JoinPoint::signature();
       std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
@@ -89,7 +91,7 @@ aspect TProfiler {
 
             // Now, we have a room for insertion
             if (child == 0) {
-               child = new TCallInfo(fParent, 0, function, file);
+               child = new TCallInfo(fParent, 0, function, file, line);
                if (fCalls.size() > fLevel) {
                   TCallInfo * same = fCalls[fLevel];
                   child->fNeighbor = same->fNeighbor;
@@ -113,7 +115,7 @@ aspect TProfiler {
          // Also means no child
          assert(fCalls.size() == 0);
 
-         fParent = new TCallInfo(0, 0, function, file);
+         fParent = new TCallInfo(0, 0, function, file, line);
          fCalls.insert(fCalls.end(), fParent);
          // Jump level
          ++fLevel;
@@ -254,6 +256,10 @@ aspect TProfiler {
          // Get output file name
          file << "callgrind.out." << pid;
          outFile.open(file.str().c_str());
+
+         outFile << "events: ticks" << std::endl;
+         
+
          outFile.close();
       }
    }
