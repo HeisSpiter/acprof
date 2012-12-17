@@ -1,6 +1,7 @@
 #ifndef __PROF_AH__
 #define __PROF_AH__
 
+#include <new>
 #include <map>
 #include <vector>
 #include <ctime>
@@ -29,8 +30,15 @@ struct TCallInfo {
       fParent(parent), fNeighbor(neighbor), fFunction(function), fHasChild(false) {};
 };
 
+enum EOutput {
+   kStdOut,
+   kCallgrind,
+   kOutputMax
+};
+
 aspect TProfiler {
    pointcut functions() = "% ...::%(...)";
+   pointcut mainargs() = "% main(int, char**)";
 
    advice execution(functions()) : before() {
       clock_t now = clock();
@@ -136,9 +144,50 @@ aspect TProfiler {
       }
    }
 
+   advice execution(mainargs()) : before() {
+      int * argc = (int *)tjp->arg(0);
+      char *** argv = (char ***)tjp->arg(1);
+
+      // Save call values
+      fOldArgc = *argc;
+      fOldArgv = *argv;
+
+      // Reset args
+      *argv = (char **)operator new(fOldArgc * sizeof(void *));
+      fNewArgv = *argv;
+
+      for (int i = 0, pos = 0; i < fOldArgc; ++i) {
+         // Check for our args
+         if (strncmp(fOldArgv[i], "--acprof-out=", 13)) {
+            if (strncmp(fOldArgv[i] + 13, "callgrind", 9)) {
+               std::cout << "Will use callgrind format output" << std::endl;
+               fFormat = kCallgrind;
+            }
+            --(*argc);
+         } else {
+            // Only pass args that aren't ours to the application
+            (*argv)[pos] = fOldArgv[i];
+            ++pos;
+         }
+      }
+   }
+
+   advice execution(mainargs()) : after() {
+      int * argc = (int *)tjp->arg(0);
+      char *** argv = (char ***)tjp->arg(1);
+
+      // Restore values
+      *argc = fOldArgc;
+      *argv = fOldArgv;
+
+      // Release memory
+      delete fNewArgv;
+   }
+
    TProfiler() {
       fLevel = 0;
       fParent = 0;
+      fFormat = kStdOut;
    }
 
    ~TProfiler() {
@@ -185,11 +234,31 @@ aspect TProfiler {
    }
 
 private:
+   bool strncmp(const char * str1, const char * str2, size_t num) {
+      size_t i = 0;
+      while (i < num) {
+         if (!*str1 || !*str2) {
+            return false;
+         }
+         if (*str1 != *str2) {
+            return false;
+         }
+         ++i;
+         ++str1;
+         ++str2;
+      }
+      return true;
+   }
+
    std::map<std::string, TRunningInfo> fCurrent;
    std::map<std::string, TTotalInfo> fTotal;
    std::vector<TCallInfo *> fCalls;
    unsigned int fLevel;
    TCallInfo * fParent;
+   int fOldArgc;
+   char ** fOldArgv;
+   char ** fNewArgv;
+   EOutput fFormat;
 };
 
 #endif
