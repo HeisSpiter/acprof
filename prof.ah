@@ -39,8 +39,9 @@ enum EOutput {
 aspect TProfiler {
    pointcut functions() = "% ...::%(...)";
    pointcut mainargs() = "% main(int, char**)";
+   pointcut profiler() = "% TProfiler::%(...)";
 
-   advice execution(functions()) : before() {
+   advice execution(functions() && !profiler()) : before() {
       clock_t now = clock();
       std::string function = JoinPoint::signature();
       std::map<std::string, TRunningInfo>::iterator desc = fCurrent.find(function);
@@ -112,7 +113,7 @@ aspect TProfiler {
       }
    }
 
-   advice execution(functions()) : after() {
+   advice execution(functions() && !profiler()) : after() {
       TRunningInfo info;
       clock_t now = clock();
       std::string function = JoinPoint::signature();
