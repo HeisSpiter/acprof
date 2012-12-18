@@ -129,7 +129,7 @@ aspect TProfiler {
 
       TProfilerAssert(fParent != 0);
       TProfilerAssert(fParent->fStartTicks != -1);
-      TProfilerAssert(fParent->fReferenceCount);
+      TProfilerAssert(fParent->fReferenceCount > 0);
 
       --fParent->fReferenceCount;
 
