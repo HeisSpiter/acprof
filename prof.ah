@@ -4,7 +4,6 @@
 #include <set>
 #include <new>
 #include <map>
-#include <stack>
 #include <vector>
 #include <ctime>
 #include <string>
@@ -285,42 +284,38 @@ aspect TProfiler {
          TCallInfo * child = fCalls[0];
          outFile << "summary: " << child->fTotalTicks << std::endl;
 
-         for (int level = fCalls.size() - 1; level >= 0; --level) {
-            std::stack<TCallInfo *> callStack;
+         std::string lastFile = "";
+         for (unsigned int level = 0; level < fCalls.size(); level++) {
+            child = fCalls[level];
+            for (; child != 0; child = child->fNeighbor) {
+               outFile << std::endl;
+               // First display data about the calling function
+               if (child->fFile != lastFile) {
+                  outFile << "fl=" << child->fFile << std::endl;
+                  lastFile = child->fFile;
+               }
+               outFile << "fn=" << child->fFunction << std::endl;
+               outFile << child->fLine << " " << child->fTotalTicks << std::endl;
 
+               // Then display each of the callee
+               for (std::set<TCallInfo *>::const_iterator it = child->fChildren.begin(); it != child->fChildren.end(); ++it) {
+                  TCallInfo * callee = (*it);
+                  if (callee->fFile != lastFile) {
+                     outFile << "cfl=" << callee->fFile << std::endl;
+                     lastFile = callee->fFile;
+                  }
+                  outFile << "cfn=" << callee->fFunction << std::endl;
+                  outFile << "calls=" << callee->fCalls << std::endl;
+                  outFile << callee->fLine << " " << callee->fTotalTicks << std::endl;
+               }
+            }
+         }
+
+         // Release memory
+         for (int level = fCalls.size() - 1; level >= 0; --level) {
             // Get call stack
             child = fCalls[level];
             while (child != 0) {	
-               if (child->fChildren.empty()) {
-                  TCallInfo * parent = child;
-                  while (parent != 0) {
-                     callStack.push(parent);
-                     parent = parent->fParent;
-                  }
-               }
-
-               // Write call stack in callgrind format
-               bool first = true;
-               std::string lastFile = "";
-               while (!callStack.empty()) {
-                  TCallInfo * inChild = callStack.top();
-                  if (first) {
-                     outFile << "fl=" << inChild->fFile << std::endl;
-                     outFile << "fn=" << inChild->fFunction << std::endl;
-                     lastFile = inChild->fFile;
-                     first = false;
-                  } else {
-                     if (lastFile != inChild->fFile) {
-                        outFile << "cfl=" << inChild->fFile << std::endl;
-                        lastFile = inChild->fFile;
-                     }
-                     outFile << "cfn=" << inChild->fFunction << std::endl;
-                     outFile << "calls=" << inChild->fCalls << std::endl;
-                  }
-                  outFile << inChild->fLine << " " << inChild->fTotalTicks << std::endl;
-                  callStack.pop();
-               }
-
                // Release and go to the next
                TCallInfo * next = child->fNeighbor;
                delete child;
