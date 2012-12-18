@@ -71,7 +71,8 @@ aspect TProfiler {
             // Browse every possible entry
             if (child) {
                for (; child != 0; child = child->fNeighbor) {
-                  if (child->fFunction == function) {
+                  // Check if we already had the same function in the same execution path
+                  if (child->fFunction == function && child->fParent == fParent) {
                      TProfilerAssert(child->fStartTicks == -1);
                      // Increase number of calls
                      ++child->fCalls;
