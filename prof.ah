@@ -280,7 +280,7 @@ aspect TProfiler {
          }
          outFile << std::endl;
 
-         outFile << "events: ticks" << std::endl;
+         outFile << "events: ticks time" << std::endl;
 
          // Output summary (ie, total events)
          TCallInfo * child = fCalls[0];
@@ -297,7 +297,8 @@ aspect TProfiler {
                   lastFile = child->fFile;
                }
                outFile << "fn=" << child->fFunction << std::endl;
-               outFile << child->fLine << " " << child->fTotalTicks << std::endl;
+               double totalTime = ((double)child->fTotalTicks)/CLOCKS_PER_SEC;
+               outFile << child->fLine << " " << child->fTotalTicks << " " << totalTime << std::endl;
 
                // Then display each of the callee
                for (std::set<TCallInfo *>::const_iterator it = child->fChildren.begin(); it != child->fChildren.end(); ++it) {
@@ -308,7 +309,8 @@ aspect TProfiler {
                   }
                   outFile << "cfn=" << callee->fFunction << std::endl;
                   outFile << "calls=" << callee->fCalls << std::endl;
-                  outFile << callee->fLine << " " << callee->fTotalTicks << std::endl;
+                  totalTime = ((double)callee->fTotalTicks)/CLOCKS_PER_SEC;
+                  outFile << callee->fLine << " " << callee->fTotalTicks << " " << totalTime << std::endl;
                }
             }
          }
