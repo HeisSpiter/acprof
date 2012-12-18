@@ -8,7 +8,6 @@
 #include <ctime>
 #include <string>
 #include <cstring>
-#include <cassert>
 #include <sstream>
 #include <fstream>
 #include <unistd.h>
@@ -43,6 +42,8 @@ enum EOutput {
    kOutputMax
 };
 
+#define TProfilerAssert(e) if (!(e)) InternalAssert(__FILE__, __LINE__, __FUNCTION__, #e)
+
 aspect TProfiler {
    pointcut functions() = "% ...::%(...)";
    pointcut mainargs() = "% main(int, char**)";
@@ -57,7 +58,7 @@ aspect TProfiler {
       // Complete call graph
       if (fParent) {
          // We're not a level 0
-         assert(fLevel > 0);
+         TProfilerAssert(fLevel > 0);
 
          // Only insert if not recursive call
          if (function != fParent->fFunction) {
@@ -71,7 +72,7 @@ aspect TProfiler {
             if (child) {
                for (; child != 0; child = child->fNeighbor) {
                   if (child->fFunction == function) {
-                     assert(child->fStartTicks == -1);
+                     TProfilerAssert(child->fStartTicks == -1);
                      // Increase number of calls
                      ++child->fCalls;
                      child->fStartTicks = now;
@@ -110,9 +111,9 @@ aspect TProfiler {
          }
       } else {
          // If no parent -> level == 0
-         assert(fLevel == 0);
+         TProfilerAssert(fLevel == 0);
          // Also means no child
-         assert(fCalls.size() == 0);
+         TProfilerAssert(fCalls.size() == 0);
 
          fParent = new TCallInfo(0, 0, function, file, line, now);
          fCalls.insert(fCalls.end(), fParent);
@@ -125,15 +126,15 @@ aspect TProfiler {
       clock_t now = clock();
       std::string function = JoinPoint::signature();
 
-      assert(fParent != 0);
-      assert(fParent->fStartTicks != -1);
-      assert(fParent->fReferenceCount);
+      TProfilerAssert(fParent != 0);
+      TProfilerAssert(fParent->fStartTicks != -1);
+      TProfilerAssert(fParent->fReferenceCount);
 
       --fParent->fReferenceCount;
 
       // Are we done?
       if (fParent->fReferenceCount == 0) {
-         assert(now >= fParent->fStartTicks);
+         TProfilerAssert(now >= fParent->fStartTicks);
 
          fParent->fTotalTicks += (now - fParent->fStartTicks);
          fParent->fStartTicks = -1;
@@ -149,8 +150,8 @@ aspect TProfiler {
       int * argc = (int *)tjp->arg(0);
       char *** argv = (char ***)tjp->arg(1);
 
-      assert(argc != 0);
-      assert(argv != 0);
+      TProfilerAssert(argc != 0);
+      TProfilerAssert(argv != 0);
 
       // Save call values
       fOldArgc = *argc;
@@ -186,8 +187,8 @@ aspect TProfiler {
       int * argc = (int *)tjp->arg(0);
       char *** argv = (char ***)tjp->arg(1);
 
-      assert(argc != 0);
-      assert(argv != 0);
+      TProfilerAssert(argc != 0);
+      TProfilerAssert(argv != 0);
 
       // Restore values
       *argc = fOldArgc;
@@ -201,8 +202,8 @@ aspect TProfiler {
    }
 
    ~TProfiler() {
-      assert(fLevel == 0);
-      assert(!fCalls.empty());
+      TProfilerAssert(fLevel == 0);
+      TProfilerAssert(!fCalls.empty());
 
       if (fFormat == kStdOut) {
          std::cout << std::endl;
@@ -330,6 +331,30 @@ aspect TProfiler {
    }
 
 private:
+   void InternalAssert(const char * file, unsigned int line, const char * function, const char * expression) {
+      std::cerr << file << ":" << line << ": " << function << ": Assertion `" << expression << "' failed." << std::endl;
+      std::cerr << "Current level: " << fLevel << std::endl;
+      std::cerr << "Current parent: " << fParent << std::endl;
+      std::cerr << "Call tree size: " << fCalls.size() << std::endl;
+      for (unsigned int i = 0; i < fCalls.size(); ++i) {
+         TCallInfo * child = fCalls[i];
+         std::cerr << "Level " << i << std::endl;
+         for (; child != 0; child = child->fNeighbor) {
+            std::cerr << "\tChild: " << child << std::endl;
+            std::cerr << "\tFunction: " << child->fFunction << std::endl;
+            std::cerr << "\tCalls: " << child->fCalls << std::endl;
+            std::cerr << "\tTotalTicks: " << child->fTotalTicks << std::endl;
+            std::cerr << "\tStartTicks: " << child->fStartTicks << std::endl;
+            std::cerr << "\tReferenceCount: " << child->fReferenceCount << std::endl;
+            for (std::set<TCallInfo *>::const_iterator it = child->fChildren.begin(); it != child->fChildren.end(); ++it) {
+               TCallInfo * callee = (*it);
+               std::cerr << "\t\tCallee: " << callee << std::endl;
+            }
+         }
+      }
+      throw;
+   }
+
    std::vector<TCallInfo *> fCalls;
    unsigned int fLevel;
    TCallInfo * fParent;
