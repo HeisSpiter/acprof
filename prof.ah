@@ -1,6 +1,7 @@
 #ifndef __PROF_AH__
 #define __PROF_AH__
 
+#include <set>
 #include <new>
 #include <map>
 #include <stack>
@@ -27,14 +28,14 @@ struct TCallInfo {
    std::string fFunction;
    std::string fFile;
    int fLine;
-   bool fHasChild;
    unsigned long fCalls;
    unsigned long fTotalTicks;
    clock_t fStartTicks;
    unsigned long fReferenceCount;
+   std::set<TCallInfo *> fChildren;
    TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line, clock_t startTicks) :
-      fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fHasChild(false), fCalls(1),
-      fTotalTicks(0), fStartTicks(startTicks), fReferenceCount(1) {};
+      fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fCalls(1), fTotalTicks(0), fStartTicks(startTicks),
+      fReferenceCount(1) {};
 };
 
 enum EOutput {
@@ -76,6 +77,8 @@ aspect TProfiler {
                      ++child->fCalls;
                      child->fStartTicks = now;
                      ++child->fReferenceCount;
+                     // We are a child
+                     fParent->fChildren.insert(child);
                      break;
                   }
                }
@@ -93,7 +96,7 @@ aspect TProfiler {
                }
 
                // Ensure parent has child
-               fParent->fHasChild = true;
+               fParent->fChildren.insert(child);
             }
 
             // In any case, jump level
@@ -212,7 +215,7 @@ aspect TProfiler {
             TCallInfo * child = fCalls[level];
             while (child != 0) {
                // No child -> display and head back
-               if (!child->fHasChild) {
+               if (child->fChildren.empty()) {
                   TCallInfo * parent = child;
                   while (parent != 0) {
                      std::cout << parent->fFunction;
@@ -288,7 +291,7 @@ aspect TProfiler {
             // Get call stack
             child = fCalls[level];
             while (child != 0) {	
-               if (!child->fHasChild) {
+               if (child->fChildren.empty()) {
                   TCallInfo * parent = child;
                   while (parent != 0) {
                      callStack.push(parent);
