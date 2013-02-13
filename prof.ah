@@ -17,7 +17,9 @@
 struct TTotalInfo {
    unsigned long fTotalTicks;
    unsigned long fCalls;
-   TTotalInfo(unsigned long totalTicks, unsigned long calls) : fTotalTicks(totalTicks), fCalls(calls) { };
+   std::string fFile;
+   int fLine;
+   TTotalInfo(unsigned long totalTicks, unsigned long calls, const std::string & file, int line) : fTotalTicks(totalTicks), fCalls(calls), fFile(file), fLine(line) { };
 };
 
 struct TCallInfo {
@@ -236,7 +238,7 @@ aspect TProfiler {
                   tot->second.fCalls += child->fCalls;
                   tot->second.fTotalTicks += child->fTotalTicks;
                } else {
-                  TTotalInfo tot(child->fTotalTicks, child->fCalls);
+                  TTotalInfo tot(child->fTotalTicks, child->fCalls, child->fFile, child->fLine);
                   total.insert(std::pair<std::string, TTotalInfo>(child->fFunction, tot));
                }
 
@@ -253,7 +255,7 @@ aspect TProfiler {
          for (std::map<std::string, TTotalInfo>::const_iterator tot = total.begin();
               tot != total.end(); ++tot) {
             double totalTime = ((double)tot->second.fTotalTicks)/CLOCKS_PER_SEC;
-            std::cout << "Function: " << tot->first.c_str() << ", calls: " << tot->second.fCalls;
+            std::cout << "Function: " << tot->first.c_str() << " (" << tot->second.fFile << ":" << tot->second.fLine << "), calls: " << tot->second.fCalls;
             std::cout << ", total ticks: " << tot->second.fTotalTicks << ", total time: " << totalTime << "s" << std::endl;
          }
 
