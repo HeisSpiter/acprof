@@ -12,14 +12,16 @@
 #include <fstream>
 #include <unistd.h>
 #include <iostream>
+#include <sys/time.h>
 #include <sys/types.h>
 
 struct TTotalInfo {
    unsigned long fTotalTicks;
+   timeval fTotalTime;
    unsigned long fCalls;
    std::string fFile;
    int fLine;
-   TTotalInfo(unsigned long totalTicks, unsigned long calls, const std::string & file, int line) : fTotalTicks(totalTicks), fCalls(calls), fFile(file), fLine(line) { };
+   TTotalInfo(unsigned long totalTicks, const timeval & totalTime, unsigned long calls, const std::string & file, int line) : fTotalTicks(totalTicks), fTotalTime(totalTime), fCalls(calls), fFile(file), fLine(line) { };
 };
 
 struct TCallInfo {
@@ -30,12 +32,14 @@ struct TCallInfo {
    int fLine;
    unsigned long fCalls;
    unsigned long fTotalTicks;
+   timeval fTotalTime;
    clock_t fStartTicks;
+   timeval fStartTime;
    unsigned long fReferenceCount;
    std::set<TCallInfo *> fChildren;
-   TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line, clock_t startTicks) :
+   TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line, clock_t startTicks, const timeval & startTime) :
       fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fCalls(1), fTotalTicks(0), fStartTicks(startTicks),
-      fReferenceCount(1) {};
+      fStartTime(startTime), fReferenceCount(1) { fTotalTime.tv_sec = 0; fTotalTime.tv_usec = 0; };
 };
 
 enum EOutput {
@@ -56,6 +60,8 @@ aspect TProfiler {
       const int line = JoinPoint::line();
       const std::string file = JoinPoint::filename();
       const std::string function = JoinPoint::signature();
+      timeval tv;
+      TProfilerAssert(gettimeofday(&tv, 0) == 0);
 
       // Complete call graph
       if (fParent) {
@@ -79,6 +85,7 @@ aspect TProfiler {
                      // Increase number of calls
                      ++child->fCalls;
                      child->fStartTicks = now;
+                     child->fStartTime = tv;
                      ++child->fReferenceCount;
                      // We are a child
                      fParent->fChildren.insert(child);
@@ -89,7 +96,7 @@ aspect TProfiler {
 
             // Now, we have a room for insertion
             if (child == 0) {
-               child = new TCallInfo(fParent, 0, function, file, line, now);
+               child = new TCallInfo(fParent, 0, function, file, line, now, tv);
                if (fCalls.size() > fLevel) {
                   TCallInfo * same = fCalls[fLevel];
                   child->fNeighbor = same->fNeighbor;
@@ -118,7 +125,7 @@ aspect TProfiler {
          // Also means no child
          TProfilerAssert(fCalls.size() == 0);
 
-         fParent = new TCallInfo(0, 0, function, file, line, now);
+         fParent = new TCallInfo(0, 0, function, file, line, now, tv);
          fCalls.insert(fCalls.end(), fParent);
          // Jump level
          ++fLevel;
@@ -128,6 +135,8 @@ aspect TProfiler {
    advice execution(functions() && !profiler()) : after() {
       clock_t now = clock();
       std::string function = JoinPoint::signature();
+      timeval tv, total, add;
+      TProfilerAssert(gettimeofday(&tv, 0) == 0);
 
       TProfilerAssert(fParent != 0);
       TProfilerAssert(fParent->fStartTicks != -1);
@@ -140,6 +149,9 @@ aspect TProfiler {
          TProfilerAssert(now >= fParent->fStartTicks);
 
          fParent->fTotalTicks += (now - fParent->fStartTicks);
+         timersub(&tv, &fParent->fStartTime, &total);
+         timeradd(&fParent->fTotalTime, &total, &add);
+         fParent->fTotalTime = add;
          fParent->fStartTicks = -1;
 
          // Decrease level
@@ -235,10 +247,13 @@ aspect TProfiler {
                // Compute total resources
                std::map<std::string, TTotalInfo>::iterator tot = total.find(child->fFunction);
                if (tot != total.end()) {
+                  timeval tv;
                   tot->second.fCalls += child->fCalls;
                   tot->second.fTotalTicks += child->fTotalTicks;
+                  timeradd(&tot->second.fTotalTime, &child->fTotalTime, &tv);
+                  tot->second.fTotalTime = tv;
                } else {
-                  TTotalInfo tot(child->fTotalTicks, child->fCalls, child->fFile, child->fLine);
+                  TTotalInfo tot(child->fTotalTicks, child->fTotalTime, child->fCalls, child->fFile, child->fLine);
                   total.insert(std::pair<std::string, TTotalInfo>(child->fFunction, tot));
                }
 
@@ -254,9 +269,9 @@ aspect TProfiler {
          // Display data at the end
          for (std::map<std::string, TTotalInfo>::const_iterator tot = total.begin();
               tot != total.end(); ++tot) {
-            double totalTime = ((double)tot->second.fTotalTicks)/CLOCKS_PER_SEC;
             std::cout << "Function: " << tot->first.c_str() << " (" << tot->second.fFile << ":" << tot->second.fLine << "), calls: " << tot->second.fCalls;
-            std::cout << ", total ticks: " << tot->second.fTotalTicks << ", total time: " << totalTime << "s" << std::endl;
+            unsigned long totalTime = tot->second.fTotalTime.tv_sec * 1000 + tot->second.fTotalTime.tv_usec;
+            std::cout << ", total ticks: " << tot->second.fTotalTicks << ", total time: " << totalTime << "ms" << std::endl;
          }
 
       }  else {
@@ -299,7 +314,7 @@ aspect TProfiler {
                   lastFile = child->fFile;
                }
                outFile << "fn=" << child->fFunction << std::endl;
-               double totalTime = ((double)child->fTotalTicks)/CLOCKS_PER_SEC;
+               unsigned long totalTime = child->fTotalTime.tv_sec * 1000 + child->fTotalTime.tv_usec;
                outFile << child->fLine << " " << child->fTotalTicks << " " << totalTime << std::endl;
 
                // Then display each of the callee
@@ -309,9 +324,10 @@ aspect TProfiler {
                      outFile << "cfl=" << callee->fFile << std::endl;
                      lastFile = callee->fFile;
                   }
+
                   outFile << "cfn=" << callee->fFunction << std::endl;
                   outFile << "calls=" << callee->fCalls << std::endl;
-                  totalTime = ((double)callee->fTotalTicks)/CLOCKS_PER_SEC;
+                  totalTime = child->fTotalTime.tv_sec * 1000 + child->fTotalTime.tv_usec;
                   outFile << callee->fLine << " " << callee->fTotalTicks << " " << totalTime << std::endl;
                }
             }
