@@ -303,16 +303,12 @@ aspect TProfiler {
          TCallInfo * child = fCalls[0];
          outFile << "summary: " << child->fTotalTicks << std::endl;
 
-         std::string lastFile = "";
          for (unsigned int level = 0; level < fCalls.size(); level++) {
             child = fCalls[level];
             for (; child != 0; child = child->fNeighbor) {
                outFile << std::endl;
                // First display data about the calling function
-               if (child->fFile != lastFile) {
-                  outFile << "fl=" << child->fFile << std::endl;
-                  lastFile = child->fFile;
-               }
+               outFile << "fl=" << child->fFile << std::endl;
                outFile << "fn=" << child->fFunction << std::endl;
                unsigned long totalTime = child->fTotalTime.tv_sec * 1000 + child->fTotalTime.tv_usec;
                outFile << child->fLine << " " << child->fTotalTicks << " " << totalTime << std::endl;
@@ -320,11 +316,7 @@ aspect TProfiler {
                // Then display each of the callee
                for (std::set<TCallInfo *>::const_iterator it = child->fChildren.begin(); it != child->fChildren.end(); ++it) {
                   TCallInfo * callee = (*it);
-                  if (callee->fFile != lastFile) {
-                     outFile << "cfl=" << callee->fFile << std::endl;
-                     lastFile = callee->fFile;
-                  }
-
+                  outFile << "cfl=" << callee->fFile << std::endl;
                   outFile << "cfn=" << callee->fFunction << std::endl;
                   outFile << "calls=" << callee->fCalls << std::endl;
                   totalTime = child->fTotalTime.tv_sec * 1000 + child->fTotalTime.tv_usec;
