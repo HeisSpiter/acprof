@@ -227,8 +227,12 @@ aspect TProfiler {
 
          // Display graphs at the end
          for (int level = fCalls.size() - 1; level >= 0; --level) {
+            unsigned long previousTicks = 0;
+            unsigned long currentTicks = 0;
             TCallInfo * child = fCalls[level];
             while (child != 0) {
+               TProfilerAssert(child->fTotalTicks >= previousTicks);
+
                // No child -> display and head back
                if (child->fChildren.empty()) {
                   TCallInfo * parent = child;
@@ -257,11 +261,15 @@ aspect TProfiler {
                   total.insert(std::pair<std::string, TTotalInfo>(child->fFunction, tot));
                }
 
+               currentTicks += child->fTotalTicks;
+
                // Release and go to the next
                TCallInfo * next = child->fNeighbor;
                delete child;
                child = next;
             }
+
+            previousTicks = currentTicks;
          }
 
          std::cout << std::endl;
@@ -303,7 +311,9 @@ aspect TProfiler {
          TCallInfo * child = fCalls[0];
          outFile << "summary: " << child->fTotalTicks << std::endl;
 
+         unsigned long previousTicks = fCalls[0]->fTotalTicks;
          for (unsigned int level = 0; level < fCalls.size(); level++) {
+            unsigned long currentTicks = 0;
             child = fCalls[level];
             for (; child != 0; child = child->fNeighbor) {
                outFile << std::endl;
@@ -322,7 +332,12 @@ aspect TProfiler {
                   totalTime = child->fTotalTime.tv_sec * 1000 + child->fTotalTime.tv_usec;
                   outFile << callee->fLine << " " << callee->fTotalTicks << " " << totalTime << std::endl;
                }
+
+               currentTicks += child->fTotalTicks;
             }
+
+            TProfilerAssert(previousTicks >= currentTicks);
+            previousTicks = currentTicks;
          }
 
          // Release memory
