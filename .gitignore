@@ -1,5 +1,6 @@
 *~
 main_comp.cpp
 functions_comp.cpp
+classes_comp.cpp
 main
 callgrind.out.*
