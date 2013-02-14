@@ -1,6 +1,7 @@
 #ifndef __CLASSES_HPP__
 #define __CLASSES_HPP__
 
+#include "functions.hpp"
 #include <iostream>
 
 class Maths {
@@ -13,7 +14,8 @@ public:
 
    unsigned int GetMax() const;
    void SetMax(unsigned int max);
-   unsigned long Sum();
+   unsigned long GetSum() const;
+   unsigned long GetFrequencyOfPrimes() const;
 };
 
 #endif

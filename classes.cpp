@@ -17,7 +17,7 @@ void Maths::SetMax(unsigned int max) {
    fMax = max;
 }
 
-unsigned long Maths::Sum() {
+unsigned long Maths::GetSum() const {
    unsigned long total = 0;
    for (unsigned int iter = 0; iter < fMax; iter++) {
       total += iter;
@@ -27,4 +27,8 @@ unsigned long Maths::Sum() {
 
 unsigned int Maths::GetMax() const {
    return fMax;
+}
+
+unsigned long Maths::GetFrequencyOfPrimes() const {
+   return FrequencyOfPrimes(fMax);
 }

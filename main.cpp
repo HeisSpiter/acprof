@@ -19,9 +19,14 @@ int main(int argc, char **argv) {
    std::cout << "Result: " << Factorial(max) << std::endl;
 
    std::cout << "Current max: " << math.GetMax() << std::endl;
+
    max = AskMax("You want sum of max? " );
    math.SetMax(max);
-   std::cout << "Result: " << math.Sum() << std::endl;
+   std::cout << "Result: " << math.GetSum() << std::endl;
+
+   max = AskMax("You want number of primes lower than? ");
+   math.SetMax(max);
+   std::cout << "Result: " << math.GetFrequencyOfPrimes() << std::endl;
 
    return 0;
 }
