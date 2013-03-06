@@ -45,7 +45,7 @@ struct TCallInfo {
    std::set<TCallInfo *> fChildren;
    TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line, clock_t startTicks, const timeval & userTime, const timeval & kernelTime) :
       fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fCalls(1), fTotalTicks(0), fStartTicks(startTicks),
-      fReferenceCount(1) { fTotalTime.fUserTime.tv_sec = 0; fTotalTime.fUserTime.tv_usec = 0; fTotalTime.fKernelTime.tv_sec = 0; fTotalTime.fKernelTime.tv_usec = 0; fStartTime.fUserTime = userTime; fStartTime.fKernelTime = kernelTime; };
+      fReferenceCount(1) { timerclear(&fTotalTime.fUserTime); timerclear(&fTotalTime.fKernelTime); fStartTime.fUserTime = userTime; fStartTime.fKernelTime = kernelTime; };
 };
 
 enum EOutput {
