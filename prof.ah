@@ -155,6 +155,9 @@ aspect TProfiler {
       // Are we done?
       if (fParent->fReferenceCount == 0) {
          TProfilerAssert(now >= fParent->fStartTicks);
+         // Use '<' and not '>=' due to man 3 timeradd recommandation
+         TProfilerAssert(!timercmp(&current.ru_utime, &fParent->fStartTime.fUserTime, <));
+         TProfilerAssert(!timercmp(&current.ru_stime, &fParent->fStartTime.fKernelTime, <));
 
          // Update ticks count
          fParent->fTotalTicks += (now - fParent->fStartTicks);
