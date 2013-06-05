@@ -216,6 +216,7 @@ aspect TProfiler {
       fNewArgv = *argv;
 
       int pos = 0;
+      fWithCoreUsage = false;
       for (int i = 0; i < fOldArgc; ++i) {
          // Check for our args
          if (strncmp(fOldArgv[i], "--acprof-out=", 13) == 0) {
@@ -224,6 +225,9 @@ aspect TProfiler {
                fFormat = kCallgrind;
             }
             --(*argc);
+         } else if (strncmp(fOldArgv[i], "--acprof-with-core-usage", 24) == 0) {
+             fWithCoreUsage = true;
+             --(*argc);
          } else {
             // Only pass args that aren't ours to the application
             (*argv)[pos] = fOldArgv[i];
@@ -338,14 +342,15 @@ aspect TProfiler {
             std::cout << totalTime << std::endl;
          }
 
-         std::cout << std::endl;
-
-         // Display core usage per function
-         for (std::map<std::string, TTotalInfo>::const_iterator tot = total.begin();
-              tot != total.end(); ++tot) {
-            std::cout << "Function: " << tot->first.c_str() << std::endl;
-            for (unsigned int j = 0; j < tot->second.fCoreUsage.size(); ++j) {
-               std::cout << "Core " << j << ": " << tot->second.fCoreUsage[j] << " calls" << std::endl;
+         if (fWithCoreUsage) {
+            std::cout << std::endl;
+            // Display core usage per function
+            for (std::map<std::string, TTotalInfo>::const_iterator tot = total.begin();
+                 tot != total.end(); ++tot) {
+               std::cout << "Function: " << tot->first.c_str() << std::endl;
+               for (unsigned int j = 0; j < tot->second.fCoreUsage.size(); ++j) {
+                  std::cout << "Core " << j << ": " << tot->second.fCoreUsage[j] << " calls" << std::endl;
+               }
             }
          }
 
@@ -465,6 +470,7 @@ private:
    char ** fOldArgv;
    char ** fNewArgv;
    EOutput fFormat;
+   bool fWithCoreUsage;
 };
 
 #endif
