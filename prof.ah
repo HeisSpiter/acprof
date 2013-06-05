@@ -27,6 +27,7 @@ struct TTotalInfo {
    unsigned long fCalls;
    std::string fFile;
    int fLine;
+   std::vector<unsigned long> fCoreUsage;
    TTotalInfo(unsigned long totalTicks, const TTimeInfo & totalTime, unsigned long calls, const std::string & file, int line) : fTotalTicks(totalTicks), fTotalTime(totalTime), fCalls(calls), fFile(file), fLine(line) { };
 };
 
@@ -43,6 +44,7 @@ struct TCallInfo {
    TTimeInfo fStartTime;
    unsigned long fReferenceCount;
    std::set<TCallInfo *> fChildren;
+   std::vector<unsigned long> fCoreUsage;
    TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line, clock_t startTicks, const timeval & userTime, const timeval & kernelTime) :
       fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fCalls(1), fTotalTicks(0), fStartTicks(startTicks),
       fReferenceCount(1) { timerclear(&fTotalTime.fUserTime); timerclear(&fTotalTime.fKernelTime); fStartTime.fUserTime = userTime; fStartTime.fKernelTime = kernelTime; };
@@ -66,6 +68,7 @@ aspect TProfiler {
       const int line = JoinPoint::line();
       const std::string file = JoinPoint::filename();
       const std::string function = JoinPoint::signature();
+      const long nbProcs = sysconf(_SC_NPROCESSORS_ONLN);
       rusage current;
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
 
@@ -104,6 +107,12 @@ aspect TProfiler {
             // Now, we have a room for insertion
             if (child == 0) {
                child = new TCallInfo(fParent, 0, function, file, line, now, current.ru_utime, current.ru_stime);
+               if (nbProcs > 1) {
+                  child->fCoreUsage.resize(nbProcs, 0);
+               } else {
+                  child->fCoreUsage.resize(0, 0);
+               }
+
                if (fCalls.size() > fLevel) {
                   TCallInfo * same = fCalls[fLevel];
                   child->fNeighbor = same->fNeighbor;
@@ -133,6 +142,12 @@ aspect TProfiler {
          TProfilerAssert(fCalls.size() == 0);
 
          fParent = new TCallInfo(0, 0, function, file, line, now, current.ru_utime, current.ru_stime);
+         if (nbProcs > 1) {
+            fParent->fCoreUsage.resize(nbProcs, 0);
+         } else {
+            fParent->fCoreUsage.resize(0, 0);
+         }
+
          fCalls.insert(fCalls.end(), fParent);
          // Jump level
          ++fLevel;
@@ -144,6 +159,7 @@ aspect TProfiler {
       std::string function = JoinPoint::signature();
       timeval total, add;
       rusage current;
+      int procId = sched_getcpu();
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
 
       TProfilerAssert(fParent != 0);
@@ -170,6 +186,12 @@ aspect TProfiler {
          timeradd(&fParent->fTotalTime.fKernelTime, &total, &add);
          fParent->fTotalTime.fKernelTime = add;
          fParent->fStartTicks = -1;
+
+         // Update CPU on which we ended and update
+         if (!fParent->fCoreUsage.empty()) {
+            TProfilerAssert(procId >= 0);
+             fParent->fCoreUsage[procId]++;
+         }
 
          // Decrease level
          --fLevel;
@@ -275,8 +297,21 @@ aspect TProfiler {
                   tot->second.fTotalTime.fUserTime = tv;
                   timeradd(&tot->second.fTotalTime.fKernelTime, &child->fTotalTime.fKernelTime, &tv);
                   tot->second.fTotalTime.fKernelTime = tv;
+
+                  // Check if our CPU usage table is smaller and increase if required
+                  if (child->fCoreUsage.size() > tot->second.fCoreUsage.size()) {
+                     tot->second.fCoreUsage.resize(child->fCoreUsage.size(), 0);
+                  }
+                  // Update
+                  for (unsigned int i = 0; i < child->fCoreUsage.size(); ++i) {
+                     tot->second.fCoreUsage[i] += child->fCoreUsage[i];
+                  }
                } else {
                   TTotalInfo tot(child->fTotalTicks, child->fTotalTime, child->fCalls, child->fFile, child->fLine);
+                  tot.fCoreUsage.resize(child->fCoreUsage.size(), 0);
+                  for (unsigned int i = 0; i < child->fCoreUsage.size(); ++i) {
+                     tot.fCoreUsage[i] = child->fCoreUsage[i];
+                  }
                   total.insert(std::pair<std::string, TTotalInfo>(child->fFunction, tot));
                }
 
@@ -303,6 +338,18 @@ aspect TProfiler {
             std::cout << totalTime << std::endl;
          }
 
+         std::cout << std::endl;
+
+         // Display core usage per function
+         for (std::map<std::string, TTotalInfo>::const_iterator tot = total.begin();
+              tot != total.end(); ++tot) {
+            std::cout << "Function: " << tot->first.c_str() << std::endl;
+            for (unsigned int j = 0; j < tot->second.fCoreUsage.size(); ++j) {
+               std::cout << "Core " << j << ": " << tot->second.fCoreUsage[j] << " calls" << std::endl;
+            }
+         }
+
+         std::cout << std::endl;
       }  else {
          std::ofstream outFile;
          std::stringstream file;
@@ -399,6 +446,9 @@ private:
             std::cerr << "\tTotalTicks: " << child->fTotalTicks << std::endl;
             std::cerr << "\tStartTicks: " << child->fStartTicks << std::endl;
             std::cerr << "\tReferenceCount: " << child->fReferenceCount << std::endl;
+            for (unsigned int j = 0; j < child->fCoreUsage.size(); ++j) {
+               std::cerr << "\tCoreUsage (" << j << "): " << child->fCoreUsage[j] << std::endl;
+            }
             for (std::set<TCallInfo *>::const_iterator it = child->fChildren.begin(); it != child->fChildren.end(); ++it) {
                TCallInfo * callee = (*it);
                std::cerr << "\t\tCallee: " << callee << std::endl;
