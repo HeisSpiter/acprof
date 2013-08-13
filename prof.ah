@@ -68,6 +68,75 @@ aspect TProfiler {
    pointcut mainargs() = "% main(int, char**)";
    pointcut profiler() = "% TProfiler::%(...)";
 
+   advice execution(mainargs()) : before() {
+      int * argc = (int *)tjp->arg(0);
+      char *** argv = (char ***)tjp->arg(1);
+
+      TProfilerAssert(argc != 0);
+      TProfilerAssert(argv != 0);
+
+      // Save call values
+      fOldArgc = *argc;
+      fOldArgv = *argv;
+
+      // Reset args
+      *argv = (char **)operator new(fOldArgc * sizeof(void *));
+      fNewArgv = *argv;
+
+      int pos = 0;
+      fWithCoreUsage = false;
+      fWithCoreTrack = false;
+      for (int i = 0; i < fOldArgc; ++i) {
+         // Check for our args
+         if (strncmp(fOldArgv[i], "--acprof-out=", 13) == 0) {
+            if (strncmp(fOldArgv[i] + 13, "callgrind", 9) == 0) {
+               if (fWithCoreTrack) {
+                  std::cerr << "Cannot use callgrind format with tracking" << std::endl;
+               } else {
+                  std::cout << "Will use callgrind format output" << std::endl;
+                  fFormat = kCallgrind;
+               }
+            }
+            --(*argc);
+         } else if (strncmp(fOldArgv[i], "--acprof-with-core=", 19) == 0) {
+             // We can't have both at a time, tracking has higher priority
+             if (!fWithCoreTrack && strncmp(fOldArgv[i] + 19, "usage", 5) == 0) {
+                fWithCoreUsage = true;
+             } else if (strncmp(fOldArgv[i] + 19, "track", 5) == 0) {
+                fWithCoreUsage = false;
+                fWithCoreTrack = true;
+                // We really cannot allow this, due to memory leaks
+                if (fFormat != kStdOut) {
+                   std::cerr << "Forcing format to stdout again. If you want callgrind format, don't use tracking" << std::endl;
+                   fFormat = kStdOut;
+                }
+             }
+             --(*argc);
+         } else {
+            // Only pass args that aren't ours to the application
+            (*argv)[pos] = fOldArgv[i];
+            ++pos;
+         }
+      }
+
+      // Zero the rest
+      for (; pos < fOldArgc; ++pos) {
+         (*argv)[pos] = 0;
+      }
+   }
+
+   advice execution(mainargs()) : after() {
+      int * argc = (int *)tjp->arg(0);
+      char *** argv = (char ***)tjp->arg(1);
+
+      TProfilerAssert(argc != 0);
+      TProfilerAssert(argv != 0);
+
+      // Restore values
+      *argc = fOldArgc;
+      *argv = fOldArgv;
+   }
+
    advice execution(functions() && !profiler()) : before() {
       const clock_t now = clock();
       const int line = JoinPoint::line();
@@ -231,75 +300,6 @@ aspect TProfiler {
       }
    }
 
-   advice execution(mainargs()) : before() {
-      int * argc = (int *)tjp->arg(0);
-      char *** argv = (char ***)tjp->arg(1);
-
-      TProfilerAssert(argc != 0);
-      TProfilerAssert(argv != 0);
-
-      // Save call values
-      fOldArgc = *argc;
-      fOldArgv = *argv;
-
-      // Reset args
-      *argv = (char **)operator new(fOldArgc * sizeof(void *));
-      fNewArgv = *argv;
-
-      int pos = 0;
-      fWithCoreUsage = false;
-      fWithCoreTrack = false;
-      for (int i = 0; i < fOldArgc; ++i) {
-         // Check for our args
-         if (strncmp(fOldArgv[i], "--acprof-out=", 13) == 0) {
-            if (strncmp(fOldArgv[i] + 13, "callgrind", 9) == 0) {
-               if (fWithCoreTrack) {
-                  std::cerr << "Cannot use callgrind format with tracking" << std::endl;
-               } else {
-                  std::cout << "Will use callgrind format output" << std::endl;
-                  fFormat = kCallgrind;
-               }
-            }
-            --(*argc);
-         } else if (strncmp(fOldArgv[i], "--acprof-with-core=", 19) == 0) {
-             // We can't have both at a time, tracking has higher priority
-             if (!fWithCoreTrack && strncmp(fOldArgv[i] + 19, "usage", 5) == 0) {
-                fWithCoreUsage = true;
-             } else if (strncmp(fOldArgv[i] + 19, "track", 5) == 0) {
-                fWithCoreUsage = false;
-                fWithCoreTrack = true;
-                // We really cannot allow this, due to memory leaks
-                if (fFormat != kStdOut) {
-                   std::cerr << "Forcing format to stdout again. If you want callgrind format, don't use tracking" << std::endl;
-                   fFormat = kStdOut;
-                }
-             }
-             --(*argc);
-         } else {
-            // Only pass args that aren't ours to the application
-            (*argv)[pos] = fOldArgv[i];
-            ++pos;
-         }
-      }
-
-      // Zero the rest
-      for (; pos < fOldArgc; ++pos) {
-         (*argv)[pos] = 0;
-      }
-   }
-
-   advice execution(mainargs()) : after() {
-      int * argc = (int *)tjp->arg(0);
-      char *** argv = (char ***)tjp->arg(1);
-
-      TProfilerAssert(argc != 0);
-      TProfilerAssert(argv != 0);
-
-      // Restore values
-      *argc = fOldArgc;
-      *argv = fOldArgv;
-   }
-
    TProfiler() {
       fLevel = 0;
       fParent = 0;
@@ -433,7 +433,10 @@ aspect TProfiler {
                  tot != total.end(); ++tot) {
                std::cout << "Function: " << tot->first.c_str() << std::endl;
                for (unsigned int j = 0; j < tot->second.fCoreUsage.size(); ++j) {
-                  std::cout << "Core " << j << ": " << tot->second.fCoreUsage[j] << " calls" << std::endl;
+                  // Prune cores with no calls
+                  if (tot->second.fCoreUsage[j] > 0) {
+                     std::cout << "Core " << j << ": " << tot->second.fCoreUsage[j] << " calls" << std::endl;
+                  }
                }
             }
          } else if (fWithCoreTrack) {
@@ -558,6 +561,7 @@ private:
                TCallInfo * callee = (*it);
                std::cerr << "\t\tCallee: " << callee << std::endl;
             }
+            std::cerr << "\tNbProcs: " << child->fNbProcs << std::endl;
          }
       }
       throw;
