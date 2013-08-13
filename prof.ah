@@ -285,7 +285,7 @@ aspect TProfiler {
          if (fWithCoreUsage && !fParent->fCoreUsage.empty()) {
             TProfilerAssert(procId >= 0);
              fParent->fCoreUsage[procId]++;
-         } else if (fWithCoreTrack && !fParent->fCoresTracks) {
+         } else if (fWithCoreTrack && fParent->fCoresTracks) {
             TProfilerAssert(procId >= 0 && procId < fParent->fNbProcs);
             TProfilerAssert(fParent->fCoreUsage[0] >= 0 && fParent->fCoreUsage[0] < fParent->fNbProcs);
             // Line is starting core, row is ending core
@@ -447,8 +447,11 @@ aspect TProfiler {
                std::cout << "Function: " << tot->first.c_str() << std::endl;
                for (unsigned long i = 0; i < tot->second.fNbProcs; ++i) {
                   for (unsigned long j = 0; j < tot->second.fNbProcs; ++j) {
-                     std::cout << "Core " << i << " to core " << j << ": " <<
-                                  *(tot->second.fCoresTracks + i * tot->second.fNbProcs + j) << " calls" << std::endl;
+                     unsigned long value = *(tot->second.fCoresTracks + i * tot->second.fNbProcs + j);
+                     if (value > 0) {
+                        std::cout << "Core " << i << " to core " << j << ": " <<
+                                     value << " calls" << std::endl;
+                     }
                   }
                }
 
