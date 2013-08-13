@@ -28,6 +28,8 @@ struct TTotalInfo {
    std::string fFile;
    int fLine;
    std::vector<unsigned long> fCoreUsage;
+   unsigned long * fCoresTracks;
+   unsigned long fNbProcs;
    TTotalInfo(unsigned long totalTicks, const TTimeInfo & totalTime, unsigned long calls, const std::string & file, int line) : fTotalTicks(totalTicks), fTotalTime(totalTime), fCalls(calls), fFile(file), fLine(line) { };
 };
 
@@ -45,9 +47,11 @@ struct TCallInfo {
    unsigned long fReferenceCount;
    std::set<TCallInfo *> fChildren;
    std::vector<unsigned long> fCoreUsage;
+   unsigned long * fCoresTracks;
+   unsigned long fNbProcs;
    TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line, clock_t startTicks, const timeval & userTime, const timeval & kernelTime) :
       fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fCalls(1), fTotalTicks(0), fStartTicks(startTicks),
-      fReferenceCount(1) { timerclear(&fTotalTime.fUserTime); timerclear(&fTotalTime.fKernelTime); fStartTime.fUserTime = userTime; fStartTime.fKernelTime = kernelTime; };
+      fReferenceCount(1), fCoresTracks(0), fNbProcs(0) { timerclear(&fTotalTime.fUserTime); timerclear(&fTotalTime.fKernelTime); fStartTime.fUserTime = userTime; fStartTime.fKernelTime = kernelTime; };
 };
 
 enum EOutput {
@@ -57,6 +61,7 @@ enum EOutput {
 };
 
 #define TProfilerAssert(e) if (!(e)) InternalAssert(__FILE__, __LINE__, __FUNCTION__, #e)
+#define min(a, b) (a < b) ? a : b
 
 aspect TProfiler {
    pointcut functions() = "% ...::%(...)";
@@ -69,6 +74,7 @@ aspect TProfiler {
       const std::string file = JoinPoint::filename();
       const std::string function = JoinPoint::signature();
       const long nbProcs = sysconf(_SC_NPROCESSORS_ONLN);
+      int procId = sched_getcpu();
       rusage current;
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
 
@@ -97,6 +103,10 @@ aspect TProfiler {
                      child->fStartTime.fUserTime = current.ru_utime;
                      child->fStartTime.fKernelTime = current.ru_stime;
                      ++child->fReferenceCount;
+                     // If required, save starting core
+                     if (fWithCoreTrack && nbProcs > 1) {
+                       child->fCoreUsage[0] = procId;
+                     }
                      // We are a child
                      fParent->fChildren.insert(child);
                      break;
@@ -111,6 +121,14 @@ aspect TProfiler {
                   child->fCoreUsage.resize(nbProcs, 0);
                } else {
                   child->fCoreUsage.resize(0, 0);
+               }
+
+               // If we have to track cores usage, allocate the matrix
+               if (fWithCoreTrack && nbProcs > 1) {
+                 child->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
+                 memset(child->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
+                 child->fNbProcs = nbProcs;
+                 child->fCoreUsage[0] = procId;
                }
 
                if (fCalls.size() > fLevel) {
@@ -148,6 +166,14 @@ aspect TProfiler {
             fParent->fCoreUsage.resize(0, 0);
          }
 
+         // If we have to track cores usage, allocate the matrix
+         if (fWithCoreTrack && nbProcs > 1) {
+            fParent->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
+            memset(fParent->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
+            fParent->fNbProcs = nbProcs;
+            fParent->fCoreUsage[0] = procId;
+         }
+
          fCalls.insert(fCalls.end(), fParent);
          // Jump level
          ++fLevel;
@@ -161,6 +187,7 @@ aspect TProfiler {
       rusage current;
       int procId = sched_getcpu();
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
+      unsigned long matrixId;
 
       TProfilerAssert(fParent != 0);
       TProfilerAssert(fParent->fStartTicks != -1);
@@ -188,9 +215,15 @@ aspect TProfiler {
          fParent->fStartTicks = -1;
 
          // Update CPU on which we ended and update
-         if (!fParent->fCoreUsage.empty()) {
+         if (fWithCoreUsage && !fParent->fCoreUsage.empty()) {
             TProfilerAssert(procId >= 0);
              fParent->fCoreUsage[procId]++;
+         } else if (fWithCoreTrack && !fParent->fCoresTracks) {
+            TProfilerAssert(procId >= 0 && procId < fParent->fNbProcs);
+            TProfilerAssert(fParent->fCoreUsage[0] >= 0 && fParent->fCoreUsage[0] < fParent->fNbProcs);
+            // Line is starting core, row is ending core
+            matrixId = fParent->fCoreUsage[0] * fParent->fNbProcs + procId;
+            fParent->fCoresTracks[matrixId]++;
          }
 
          // Decrease level
@@ -217,16 +250,32 @@ aspect TProfiler {
 
       int pos = 0;
       fWithCoreUsage = false;
+      fWithCoreTrack = false;
       for (int i = 0; i < fOldArgc; ++i) {
          // Check for our args
          if (strncmp(fOldArgv[i], "--acprof-out=", 13) == 0) {
             if (strncmp(fOldArgv[i] + 13, "callgrind", 9) == 0) {
-               std::cout << "Will use callgrind format output" << std::endl;
-               fFormat = kCallgrind;
+               if (fWithCoreTrack) {
+                  std::cerr << "Cannot use callgrind format with tracking" << std::endl;
+               } else {
+                  std::cout << "Will use callgrind format output" << std::endl;
+                  fFormat = kCallgrind;
+               }
             }
             --(*argc);
-         } else if (strncmp(fOldArgv[i], "--acprof-with-core-usage", 24) == 0) {
-             fWithCoreUsage = true;
+         } else if (strncmp(fOldArgv[i], "--acprof-with-core=", 19) == 0) {
+             // We can't have both at a time, tracking has higher priority
+             if (!fWithCoreTrack && strncmp(fOldArgv[i] + 19, "usage", 5) == 0) {
+                fWithCoreUsage = true;
+             } else if (strncmp(fOldArgv[i] + 19, "track", 5) == 0) {
+                fWithCoreUsage = false;
+                fWithCoreTrack = true;
+                // We really cannot allow this, due to memory leaks
+                if (fFormat != kStdOut) {
+                   std::cerr << "Forcing format to stdout again. If you want callgrind format, don't use tracking" << std::endl;
+                   fFormat = kStdOut;
+                }
+             }
              --(*argc);
          } else {
             // Only pass args that aren't ours to the application
@@ -260,6 +309,8 @@ aspect TProfiler {
    }
 
    ~TProfiler() {
+      unsigned long maxProc;
+
       TProfilerAssert(fLevel == 0);
       TProfilerAssert(!fCalls.empty());
 
@@ -302,19 +353,52 @@ aspect TProfiler {
                   timeradd(&tot->second.fTotalTime.fKernelTime, &child->fTotalTime.fKernelTime, &tv);
                   tot->second.fTotalTime.fKernelTime = tv;
 
-                  // Check if our CPU usage table is smaller and increase if required
-                  if (child->fCoreUsage.size() > tot->second.fCoreUsage.size()) {
-                     tot->second.fCoreUsage.resize(child->fCoreUsage.size(), 0);
-                  }
-                  // Update
-                  for (unsigned int i = 0; i < child->fCoreUsage.size(); ++i) {
-                     tot->second.fCoreUsage[i] += child->fCoreUsage[i];
+                  if (fWithCoreUsage) {
+                     // Check if our CPU usage table is smaller and increase if required
+                     if (child->fCoreUsage.size() > tot->second.fCoreUsage.size()) {
+                        tot->second.fCoreUsage.resize(child->fCoreUsage.size(), 0);
+                     }
+                     // Update
+                     for (unsigned int i = 0; i < child->fCoreUsage.size(); ++i) {
+                        tot->second.fCoreUsage[i] += child->fCoreUsage[i];
+                     }
+                  } else if (fWithCoreTrack && child->fNbProcs > 0 && child->fCoresTracks) {
+                     // If we don't have place yet, do some
+                     if (tot->second.fCoresTracks == 0 && child->fCoresTracks) {
+                        tot->second.fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * child->fNbProcs * child->fNbProcs);
+                        // And copy our stuff
+                        memcpy(tot->second.fCoresTracks, child->fCoresTracks, sizeof(unsigned long) * child->fNbProcs * child->fNbProcs);
+                        tot->second.fNbProcs = child->fNbProcs;
+                     } else if (child->fCoresTracks) {
+                        // Merge results
+                        maxProc = min(child->fNbProcs, tot->second.fNbProcs);
+                        for (unsigned int i = 0; i < maxProc; ++i) {
+                           for (unsigned int j = 0; j < maxProc; ++j) {
+                              // Some explanations regarding this line
+                              // We are always dealing with online procs (sounds like a bit idea)
+                              // So, in case one gets online WHILE we're profiling our maxtrix might not have the same size
+                              // Hence the min thingy to get the size of the min matrix
+                              // To merge, we have then to do it with respect to initial tab and to second tab
+                              // This is why we use for each their own size - we know we cannot overflow
+                              // And this ensures we don't improperly merge indexes
+                              *(tot->second.fCoresTracks + i * tot->second.fNbProcs + j) += *(child->fCoresTracks + i * child->fNbProcs + j);
+                           }
+                        } 
+                     }
                   }
                } else {
                   TTotalInfo tot(child->fTotalTicks, child->fTotalTime, child->fCalls, child->fFile, child->fLine);
-                  tot.fCoreUsage.resize(child->fCoreUsage.size(), 0);
-                  for (unsigned int i = 0; i < child->fCoreUsage.size(); ++i) {
-                     tot.fCoreUsage[i] = child->fCoreUsage[i];
+                  if (fWithCoreUsage) {
+                     tot.fCoreUsage.resize(child->fCoreUsage.size(), 0);
+                     for (unsigned int i = 0; i < child->fCoreUsage.size(); ++i) {
+                        tot.fCoreUsage[i] = child->fCoreUsage[i];
+                     }
+                  } else if (fWithCoreTrack && child->fNbProcs > 0 && child->fCoresTracks) {
+                     // Just allocate
+                     tot.fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * child->fNbProcs * child->fNbProcs);
+                     // And copy our stuff
+                     memcpy(tot.fCoresTracks, child->fCoresTracks, sizeof(unsigned long) * child->fNbProcs * child->fNbProcs);
+                     tot.fNbProcs = child->fNbProcs;
                   }
                   total.insert(std::pair<std::string, TTotalInfo>(child->fFunction, tot));
                }
@@ -323,6 +407,8 @@ aspect TProfiler {
 
                // Release and go to the next
                TCallInfo * next = child->fNeighbor;
+               // ISO-C++ says we can delete null pointer
+               delete child->fCoresTracks;
                delete child;
                child = next;
             }
@@ -351,6 +437,22 @@ aspect TProfiler {
                for (unsigned int j = 0; j < tot->second.fCoreUsage.size(); ++j) {
                   std::cout << "Core " << j << ": " << tot->second.fCoreUsage[j] << " calls" << std::endl;
                }
+            }
+         } else if (fWithCoreTrack) {
+            std::cout << std::endl;
+            // Display core usage per function
+            for (std::map<std::string, TTotalInfo>::const_iterator tot = total.begin();
+                 tot != total.end(); ++tot) {
+               std::cout << "Function: " << tot->first.c_str() << std::endl;
+               for (unsigned long i = 0; i < tot->second.fNbProcs; ++i) {
+                  for (unsigned long j = 0; j < tot->second.fNbProcs; ++j) {
+                     std::cout << "Core " << i << " to core " << j << ": " <<
+                                  *(tot->second.fCoresTracks + i * tot->second.fNbProcs + j) << " calls" << std::endl;
+                  }
+               }
+
+               // Don't leak memory
+               delete tot->second.fCoresTracks;
             }
          }
 
@@ -471,6 +573,7 @@ private:
    char ** fNewArgv;
    EOutput fFormat;
    bool fWithCoreUsage;
+   bool fWithCoreTrack;
 };
 
 #endif
