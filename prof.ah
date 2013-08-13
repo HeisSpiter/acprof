@@ -107,8 +107,6 @@ aspect TProfiler {
                      if (fWithCoreTrack && nbProcs > 1) {
                        child->fCoreUsage[0] = procId;
                      }
-                     // We are a child
-                     fParent->fChildren.insert(child);
                      break;
                   }
                }
