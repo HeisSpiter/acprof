@@ -10,6 +10,7 @@
 #include <cstring>
 #include <sstream>
 #include <fstream>
+#include <iterator>
 #include <unistd.h>
 #include <iostream>
 #include <sys/time.h>
@@ -145,8 +146,14 @@ aspect TProfiler {
       const long nbProcs = sysconf(_SC_NPROCESSORS_ONLN);
       int procId = sched_getcpu();
       rusage current;
+#ifndef __puma && defined _PTHREAD_H
+      unsigned long threadId;
+#endif
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
 
+#ifndef __puma && defined _PTHREAD_H
+      pthread_mutex_lock(&fBigLock);
+#endif
       // Complete call graph
       if (fParent) {
          // We're not a level 0
@@ -174,7 +181,15 @@ aspect TProfiler {
                      ++child->fReferenceCount;
                      // If required, save starting core
                      if (fWithCoreTrack && nbProcs > 1) {
+#ifndef __puma && defined _PTHREAD_H
+                       // We have to get thread ID before we resize, otherwise it can cause
+                       // issues by having a vector which is too small
+                       threadId = GetThreadId();
+                       child->fCoreUsage.resize(fThreadsId.size(), 0);
+                       child->fCoreUsage[threadId] = procId;
+#else
                        child->fCoreUsage[0] = procId;
+#endif
                      }
                      break;
                   }
@@ -192,10 +207,18 @@ aspect TProfiler {
 
                // If we have to track cores usage, allocate the matrix
                if (fWithCoreTrack && nbProcs > 1) {
-                 child->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
-                 memset(child->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
-                 child->fNbProcs = nbProcs;
-                 child->fCoreUsage[0] = procId;
+                  child->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
+                  memset(child->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
+                  child->fNbProcs = nbProcs;
+#ifndef __puma && defined _PTHREAD_H
+                  // We have to get thread ID before we resize, otherwise it can cause
+                  // issues by having a vector which is too small
+                  threadId = GetThreadId();
+                  child->fCoreUsage.resize(fThreadsId.size(), 0);
+                  child->fCoreUsage[threadId] = procId;
+#else
+                  child->fCoreUsage[0] = procId;
+#endif
                }
 
                if (fCalls.size() > fLevel) {
@@ -238,13 +261,25 @@ aspect TProfiler {
             fParent->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
             memset(fParent->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
             fParent->fNbProcs = nbProcs;
+#ifndef __puma && defined _PTHREAD_H
+            // We have to get thread ID before we resize, otherwise it can cause
+            // issues by having a vector which is too small
+            threadId = GetThreadId();
+            fParent->fCoreUsage.resize(fThreadsId.size(), 0);
+            fParent->fCoreUsage[threadId] = procId;
+#else
             fParent->fCoreUsage[0] = procId;
+#endif
          }
 
          fCalls.insert(fCalls.end(), fParent);
          // Jump level
          ++fLevel;
       }
+
+#ifndef __puma && defined _PTHREAD_H
+      pthread_mutex_unlock(&fBigLock);
+#endif
    }
 
    advice execution(functions() && !profiler()) : after() {
@@ -255,6 +290,13 @@ aspect TProfiler {
       int procId = sched_getcpu();
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
       unsigned long matrixId;
+#ifndef __puma && defined _PTHREAD_H
+      unsigned long threadId;
+#endif
+
+#ifndef __puma && defined _PTHREAD_H
+      pthread_mutex_lock(&fBigLock);
+#endif
 
       TProfilerAssert(fParent != 0);
       TProfilerAssert(fParent->fStartTicks != -1);
@@ -288,8 +330,16 @@ aspect TProfiler {
          } else if (fWithCoreTrack && fParent->fCoresTracks) {
             TProfilerAssert(procId >= 0 && procId < fParent->fNbProcs);
             TProfilerAssert(fParent->fCoreUsage[0] >= 0 && fParent->fCoreUsage[0] < fParent->fNbProcs);
+#ifndef __puma && defined _PTHREAD_H
+            threadId = GetThreadId();
+            TProfilerAssert(threadId < fThreadsId.size());
+#endif
             // Line is starting core, row is ending core
+#ifndef __puma && defined _PTHREAD_H
+            matrixId = fParent->fCoreUsage[threadId] * fParent->fNbProcs + procId;
+#else
             matrixId = fParent->fCoreUsage[0] * fParent->fNbProcs + procId;
+#endif
             fParent->fCoresTracks[matrixId]++;
          }
 
@@ -298,16 +348,27 @@ aspect TProfiler {
          // Change parent
          fParent = fParent->fParent;
       }
+
+#ifndef __puma && defined _PTHREAD_H
+      pthread_mutex_unlock(&fBigLock);
+#endif
    }
 
    TProfiler() {
       fLevel = 0;
       fParent = 0;
       fFormat = kStdOut;
+#ifndef __puma && defined _PTHREAD_H
+      pthread_mutex_init(&fBigLock, 0);
+#endif
    }
 
    ~TProfiler() {
       unsigned long maxProc;
+
+#ifndef __puma && defined _PTHREAD_H
+      pthread_mutex_lock(&fBigLock);
+#endif
 
       TProfilerAssert(fLevel == 0);
       TProfilerAssert(!fCalls.empty());
@@ -539,6 +600,11 @@ aspect TProfiler {
       }
 
       delete fNewArgv;
+
+#ifndef __puma && defined _PTHREAD_H
+      pthread_mutex_unlock(&fBigLock);
+      pthread_mutex_destroy(&fBigLock);
+#endif
    }
 
 private:
@@ -579,6 +645,33 @@ private:
    EOutput fFormat;
    bool fWithCoreUsage;
    bool fWithCoreTrack;
+
+#ifndef __puma && defined _PTHREAD_H
+   struct TThreadsCompare {
+      bool operator() (const pthread_t & t1, const pthread_t & t2) const {
+         return (pthread_equal(t1, t2) != 0);
+      }
+   };
+
+   unsigned long GetThreadId() {
+      // This function is only used for cores track
+      // It is used to translate thread id to something between 0 and "infinity"
+      // So that we can use this simplified thread ID as vector index
+      pthread_t tId;
+      std::set<pthread_t, TThreadsCompare>::iterator currentThread;
+
+      tId = pthread_self();
+
+      // Try to insert new thread in list
+      currentThread = fThreadsId.insert(fThreadsId.end(), tId);
+
+      // Return the simplified ID for thread
+      return std::distance(fThreadsId.begin(), currentThread);
+   }
+
+   pthread_mutex_t fBigLock;
+   std::set<pthread_t, TThreadsCompare> fThreadsId;
+#endif
 };
 
 #endif
