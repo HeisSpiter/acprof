@@ -186,15 +186,17 @@ aspect TProfiler {
                      child->fStartTime.fKernelTime = current.ru_stime;
                      ++child->fReferenceCount;
                      // If required, save starting core
-                     if (fWithCoreTrack && nbProcs > 1) {
+                     if (fWithCoreTrack) {
+                        // When that feature is enabled, we have more than one core
+                        TProfilerAssert(nbProcs > 1);
 #ifndef __puma && defined _PTHREAD_H
-                       // We have to get thread ID before we resize, otherwise it can cause
-                       // issues by having a vector which is too small
-                       threadId = GetThreadId();
-                       child->fCoreUsage.resize(fThreadsId.size(), 0);
-                       child->fCoreUsage[threadId] = procId;
+                        // We have to get thread ID before we resize, otherwise it can cause
+                        // issues by having a vector which is too small
+                        threadId = GetThreadId();
+                        child->fCoreUsage.resize(fThreadsId.size(), 0);
+                        child->fCoreUsage[threadId] = procId;
 #else
-                       child->fCoreUsage[0] = procId;
+                        child->fCoreUsage[0] = procId;
 #endif
                      }
                      break;
@@ -205,14 +207,18 @@ aspect TProfiler {
             // Now, we have a room for insertion
             if (child == 0) {
                child = new TCallInfo(fParent, 0, function, file, line, now, current.ru_utime, current.ru_stime);
-               if (nbProcs > 1) {
+               if (fWithCoreUsage) {
+                  // When that feature is enabled, we have more than one core
+                  TProfilerAssert(nbProcs > 1);
                   child->fCoreUsage.resize(nbProcs, 0);
                } else {
                   child->fCoreUsage.resize(0, 0);
                }
 
                // If we have to track cores usage, allocate the matrix
-               if (fWithCoreTrack && nbProcs > 1) {
+               if (fWithCoreTrack) {
+                  // When that feature is enabled, we have more than one core
+                  TProfilerAssert(nbProcs > 1);
                   child->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
                   memset(child->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
                   child->fNbProcs = nbProcs;
@@ -256,14 +262,18 @@ aspect TProfiler {
          TProfilerAssert(fCalls.size() == 0);
 
          fParent = new TCallInfo(0, 0, function, file, line, now, current.ru_utime, current.ru_stime);
-         if (nbProcs > 1) {
+         if (fWithCoreUsage) {
+            // When that feature is enabled, we have more than one core
+            TProfilerAssert(nbProcs > 1);
             fParent->fCoreUsage.resize(nbProcs, 0);
          } else {
             fParent->fCoreUsage.resize(0, 0);
          }
 
          // If we have to track cores usage, allocate the matrix
-         if (fWithCoreTrack && nbProcs > 1) {
+         if (fWithCoreTrack) {
+            // When that feature is enabled, we have more than one core
+            TProfilerAssert(nbProcs > 1);
             fParent->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
             memset(fParent->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
             fParent->fNbProcs = nbProcs;
