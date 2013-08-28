@@ -339,7 +339,7 @@ aspect TProfiler {
          fParent->fStartTicks = -1;
 
          // Update CPU on which we ended and update
-         if (fWithCoreUsage && !fParent->fCoreUsage.empty()) {
+         if (fWithCoreUsage) {
             TProfilerAssert(procId >= 0);
              fParent->fCoreUsage[procId]++;
          } else if (fWithCoreTrack && fParent->fCoresTracks) {
