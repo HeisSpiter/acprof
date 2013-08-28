@@ -72,6 +72,7 @@ aspect TProfiler {
    advice execution(mainargs()) : before() {
       int * argc = (int *)tjp->arg(0);
       char *** argv = (char ***)tjp->arg(1);
+      const long nbProcs = sysconf(_SC_NPROCESSORS_CONF);
 
       TProfilerAssert(argc != 0);
       TProfilerAssert(argv != 0);
@@ -100,17 +101,22 @@ aspect TProfiler {
             }
             --(*argc);
          } else if (strncmp(fOldArgv[i], "--acprof-with-core=", 19) == 0) {
-             // We can't have both at a time, tracking has higher priority
-             if (!fWithCoreTrack && strncmp(fOldArgv[i] + 19, "usage", 5) == 0) {
-                fWithCoreUsage = true;
-             } else if (strncmp(fOldArgv[i] + 19, "track", 5) == 0) {
-                fWithCoreUsage = false;
-                fWithCoreTrack = true;
-                // We really cannot allow this, due to memory leaks
-                if (fFormat != kStdOut) {
-                   std::cerr << "Forcing format to stdout again. If you want callgrind format, don't use tracking" << std::endl;
-                   fFormat = kStdOut;
+             // We don't need to enable such feature if we don't have enough cores
+             if (nbProcs > 1) {
+                // We can't have both at a time, tracking has higher priority
+                if (!fWithCoreTrack && strncmp(fOldArgv[i] + 19, "usage", 5) == 0) {
+                   fWithCoreUsage = true;
+                } else if (strncmp(fOldArgv[i] + 19, "track", 5) == 0) {
+                   fWithCoreUsage = false;
+                   fWithCoreTrack = true;
+                   // We really cannot allow this, due to memory leaks
+                   if (fFormat != kStdOut) {
+                      std::cerr << "Forcing format to stdout again. If you want callgrind format, don't use tracking" << std::endl;
+                      fFormat = kStdOut;
+                   }
                 }
+             } else {
+                std::cerr << "Ignored core usage, not enough core on the system to have relevant results" << std::endl;
              }
              --(*argc);
          } else {
