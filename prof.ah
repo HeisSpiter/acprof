@@ -348,9 +348,7 @@ aspect TProfiler {
 #ifndef __puma && defined _PTHREAD_H
             threadId = GetThreadId();
             TProfilerAssert(threadId < fThreadsId.size());
-#endif
             // Line is starting core, row is ending core
-#ifndef __puma && defined _PTHREAD_H
             matrixId = fParent->fCoreUsage[threadId] * fParent->fNbProcs + procId;
 #else
             matrixId = fParent->fCoreUsage[0] * fParent->fNbProcs + procId;
