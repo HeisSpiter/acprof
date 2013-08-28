@@ -62,7 +62,6 @@ enum EOutput {
 };
 
 #define TProfilerAssert(e) if (!(e)) InternalAssert(__FILE__, __LINE__, __FUNCTION__, #e)
-#define min(a, b) (a < b) ? a : b
 
 aspect TProfiler {
    pointcut functions() = "% ...::%(...)";
@@ -429,15 +428,13 @@ aspect TProfiler {
                   tot->second.fTotalTime.fKernelTime = tv;
 
                   if (fWithCoreUsage) {
-                     // Check if our CPU usage table is smaller and increase if required
-                     if (child->fCoreUsage.size() > tot->second.fCoreUsage.size()) {
-                        tot->second.fCoreUsage.resize(child->fCoreUsage.size(), 0);
-                     }
                      // Update
+                     TProfilerAssert(child->fCoreUsage.size() == tot->second.fCoreUsage.size());
                      for (unsigned int i = 0; i < child->fCoreUsage.size(); ++i) {
                         tot->second.fCoreUsage[i] += child->fCoreUsage[i];
                      }
-                  } else if (fWithCoreTrack && child->fNbProcs > 0 && child->fCoresTracks) {
+                  } else if (fWithCoreTrack > 0 && child->fCoresTracks) {
+                     TProfilerAssert(child->fNbProcs > 0);
                      // If we don't have place yet, do some
                      if (tot->second.fCoresTracks == 0 && child->fCoresTracks) {
                         tot->second.fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * child->fNbProcs * child->fNbProcs);
@@ -445,18 +442,11 @@ aspect TProfiler {
                         memcpy(tot->second.fCoresTracks, child->fCoresTracks, sizeof(unsigned long) * child->fNbProcs * child->fNbProcs);
                         tot->second.fNbProcs = child->fNbProcs;
                      } else if (child->fCoresTracks) {
-                        // Merge results
-                        maxProc = min(child->fNbProcs, tot->second.fNbProcs);
-                        for (unsigned int i = 0; i < maxProc; ++i) {
-                           for (unsigned int j = 0; j < maxProc; ++j) {
-                              // Some explanations regarding this line
-                              // We are always dealing with online procs (sounds like a bit idea)
-                              // So, in case one gets online WHILE we're profiling our maxtrix might not have the same size
-                              // Hence the min thingy to get the size of the min matrix
-                              // To merge, we have then to do it with respect to initial tab and to second tab
-                              // This is why we use for each their own size - we know we cannot overflow
-                              // And this ensures we don't improperly merge indexes
-                              *(tot->second.fCoresTracks + i * tot->second.fNbProcs + j) += *(child->fCoresTracks + i * child->fNbProcs + j);
+                        TProfilerAssert(child->fNbProcs == tot->second.fNbProcs);
+                        // Merge results, index per index
+                        for (unsigned int i = 0; i < child->fNbProcs; ++i) {
+                           for (unsigned int j = 0; j < child->fNbProcs; ++j) {
+                              *(tot->second.fCoresTracks + i * child->fNbProcs + j) += *(child->fCoresTracks + i * child->fNbProcs + j);
                            }
                         } 
                      }
@@ -468,7 +458,8 @@ aspect TProfiler {
                      for (unsigned int i = 0; i < child->fCoreUsage.size(); ++i) {
                         tot.fCoreUsage[i] = child->fCoreUsage[i];
                      }
-                  } else if (fWithCoreTrack && child->fNbProcs > 0 && child->fCoresTracks) {
+                  } else if (fWithCoreTrack && child->fCoresTracks) {
+                     TProfilerAssert(child->fNbProcs > 0);
                      // Just allocate
                      tot.fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * child->fNbProcs * child->fNbProcs);
                      // And copy our stuff
