@@ -61,12 +61,21 @@ enum EOutput {
    kOutputMax
 };
 
+#if !defined(__puma) && defined _PTHREAD_H
+#define GetParent() fParent[threadId]
+#define GetLevel() fLevel[threadId]
+#else
+#define GetParent() fParent
+#define GetLevel() fLevel
+#endif
+
 #define TProfilerAssert(e) if (!(e)) InternalAssert(__FILE__, __LINE__, __FUNCTION__, #e)
 
 aspect TProfiler {
    pointcut functions() = "% ...::%(...)";
    pointcut mainargs() = "% main(int, char**)";
    pointcut profiler() = "% TProfiler::%(...)";
+   pointcut thread_create() = "% TProfiler::pthread_create(...)";
 
    advice execution(mainargs()) : before() {
       int * argc = (int *)tjp->arg(0);
@@ -151,32 +160,58 @@ aspect TProfiler {
       const long nbProcs = sysconf(_SC_NPROCESSORS_CONF);
       int procId = sched_getcpu();
       rusage current;
-#ifndef __puma && defined _PTHREAD_H
+#if !defined(__puma) && defined _PTHREAD_H
       unsigned long threadId;
 #endif
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
 
-#ifndef __puma && defined _PTHREAD_H
+#if !defined(__puma) && defined _PTHREAD_H
       pthread_mutex_lock(&fBigLock);
+
+      threadId = GetThreadId();
+      // Check if we have just been created
+      // This check is mandatory. Because we check for being bigger, strictly
+      // than threadId, it means that main() doesn't go through that
+      // call path, which is what we want, it wouldn't make sense otherwise
+      if (threadId > fParent.size())
+      {
+          // We are not main
+          TProfilerAssert(threadId != 0);
+
+          // Ensure we can set our data
+          fParent.resize(threadId, 0);
+          fLevel.resize(threadId, 0);
+
+          // Now, ensure we have data waiting for us
+          // That's a bit tricky, but the best way to know
+          // if a function has started a mutex is to attempt
+          // to lock data
+          // XXX: Doesn't link?!
+          //TProfilerAssert(pthread_mutex_trylock(&gTProfiler_fCreateLock) < 0);
+          // Then, properly initialize our data
+          GetLevel() = fCreationLevel;
+          GetParent() = (TCallInfo *)fThreadCreator;
+      }
 #endif
+
       // Complete call graph
-      if (fParent) {
+      if (GetParent()) {
          // We're not a level 0
-         TProfilerAssert(fLevel > 0);
+         TProfilerAssert(GetLevel() > 0);
 
          // Only insert if not recursive call
-         if (function != fParent->fFunction) {
+         if (function != GetParent()->fFunction) {
             // Check whether we are already in
             TCallInfo * child = 0;
-            if (fCalls.size() > fLevel) {
-               child = fCalls[fLevel];
+            if (fCalls.size() > GetLevel()) {
+               child = fCalls[GetLevel()];
             }
 
             // Browse every possible entry
             if (child) {
                for (; child != 0; child = child->fNeighbor) {
                   // Check if we already had the same function in the same execution path
-                  if (child->fFunction == function && child->fParent == fParent) {
+                  if (child->fFunction == function && child->fParent == GetParent()) {
                      TProfilerAssert(child->fStartTicks == -1);
                      // Increase number of calls
                      ++child->fCalls;
@@ -188,10 +223,7 @@ aspect TProfiler {
                      if (fWithCoreTrack) {
                         // When that feature is enabled, we have more than one core
                         TProfilerAssert(nbProcs > 1);
-#ifndef __puma && defined _PTHREAD_H
-                        // We have to get thread ID before we resize, otherwise it can cause
-                        // issues by having a vector which is too small
-                        threadId = GetThreadId();
+#if !defined(__puma) && defined _PTHREAD_H
                         child->fCoreUsage.resize(fThreadsId.size(), 0);
                         child->fCoreUsage[threadId] = procId;
 #else
@@ -205,7 +237,7 @@ aspect TProfiler {
 
             // Now, we have a room for insertion
             if (child == 0) {
-               child = new TCallInfo(fParent, 0, function, file, line, now, current.ru_utime, current.ru_stime);
+               child = new TCallInfo(GetParent(), 0, function, file, line, now, current.ru_utime, current.ru_stime);
                if (fWithCoreUsage) {
                   // When that feature is enabled, we have more than one core
                   TProfilerAssert(nbProcs > 1);
@@ -221,10 +253,7 @@ aspect TProfiler {
                   child->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
                   memset(child->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
                   child->fNbProcs = nbProcs;
-#ifndef __puma && defined _PTHREAD_H
-                  // We have to get thread ID before we resize, otherwise it can cause
-                  // issues by having a vector which is too small
-                  threadId = GetThreadId();
+#if !defined(__puma) && defined _PTHREAD_H
                   child->fCoreUsage.resize(fThreadsId.size(), 0);
                   child->fCoreUsage[threadId] = procId;
 #else
@@ -232,8 +261,8 @@ aspect TProfiler {
 #endif
                }
 
-               if (fCalls.size() > fLevel) {
-                  TCallInfo * same = fCalls[fLevel];
+               if (fCalls.size() > GetLevel()) {
+                  TCallInfo * same = fCalls[GetLevel()];
                   child->fNeighbor = same->fNeighbor;
                   same->fNeighbor = child;
                } else {
@@ -241,58 +270,59 @@ aspect TProfiler {
                }
 
                // Ensure parent has child
-               fParent->fChildren.insert(child);
+               GetParent()->fChildren.insert(child);
             }
 
             // In any case, jump level
-            ++fLevel;
+            ++GetLevel();
             // Switch parent
-            fParent = child;
+            GetParent() = child;
          } else {
             // Increase number of calls
-            ++fParent->fCalls;
+            ++GetParent()->fCalls;
             // Increment reference count
-            ++fParent->fReferenceCount;
+            ++GetParent()->fReferenceCount;
          }
       } else {
          // If no parent -> level == 0
-         TProfilerAssert(fLevel == 0);
-         // Also means no child
-         TProfilerAssert(fCalls.size() == 0);
+         TProfilerAssert(GetLevel() == 0);
+         // Also means no child - if on main()
+#if !defined(__puma) && defined _PTHREAD_H
+	TProfilerAssert(threadId != 0 || fCalls.size() == 0);
+#else
+	TProfilerAssert(fCalls.size() == 0);
+#endif
 
-         fParent = new TCallInfo(0, 0, function, file, line, now, current.ru_utime, current.ru_stime);
+         GetParent() = new TCallInfo(0, 0, function, file, line, now, current.ru_utime, current.ru_stime);
          if (fWithCoreUsage) {
             // When that feature is enabled, we have more than one core
             TProfilerAssert(nbProcs > 1);
-            fParent->fCoreUsage.resize(nbProcs, 0);
+            GetParent()->fCoreUsage.resize(nbProcs, 0);
          } else {
-            fParent->fCoreUsage.resize(0, 0);
+            GetParent()->fCoreUsage.resize(0, 0);
          }
 
          // If we have to track cores usage, allocate the matrix
          if (fWithCoreTrack) {
             // When that feature is enabled, we have more than one core
             TProfilerAssert(nbProcs > 1);
-            fParent->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
-            memset(fParent->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
-            fParent->fNbProcs = nbProcs;
-#ifndef __puma && defined _PTHREAD_H
-            // We have to get thread ID before we resize, otherwise it can cause
-            // issues by having a vector which is too small
-            threadId = GetThreadId();
-            fParent->fCoreUsage.resize(fThreadsId.size(), 0);
-            fParent->fCoreUsage[threadId] = procId;
+            GetParent()->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
+            memset(GetParent()->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
+            GetParent()->fNbProcs = nbProcs;
+#if !defined(__puma) && defined _PTHREAD_H
+            GetParent()->fCoreUsage.resize(fThreadsId.size(), 0);
+            GetParent()->fCoreUsage[threadId] = procId;
 #else
-            fParent->fCoreUsage[0] = procId;
+            GetParent()->fCoreUsage[0] = procId;
 #endif
          }
 
-         fCalls.insert(fCalls.end(), fParent);
+         fCalls.insert(fCalls.end(), GetParent());
          // Jump level
-         ++fLevel;
+         ++GetLevel();
       }
 
-#ifndef __puma && defined _PTHREAD_H
+#if !defined(__puma) && defined _PTHREAD_H
       pthread_mutex_unlock(&fBigLock);
 #endif
    }
@@ -305,83 +335,117 @@ aspect TProfiler {
       int procId = sched_getcpu();
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
       unsigned long matrixId;
-#ifndef __puma && defined _PTHREAD_H
+#if !defined(__puma) && defined _PTHREAD_H
       unsigned long threadId;
 #endif
 
-#ifndef __puma && defined _PTHREAD_H
+#if !defined(__puma) && defined _PTHREAD_H
+      threadId = GetThreadId();
+
       pthread_mutex_lock(&fBigLock);
+
+      TProfilerAssert(fParent.size() > threadId);
+      TProfilerAssert(fLevel.size() > threadId);
 #endif
 
-      TProfilerAssert(fParent != 0);
-      TProfilerAssert(fParent->fStartTicks != -1);
-      TProfilerAssert(fParent->fReferenceCount > 0);
+      TProfilerAssert(GetParent() != 0);
+      TProfilerAssert(GetParent()->fStartTicks != -1);
+      TProfilerAssert(GetParent()->fReferenceCount > 0);
 
-      --fParent->fReferenceCount;
+      --GetParent()->fReferenceCount;
 
       // Are we done?
-      if (fParent->fReferenceCount == 0) {
-         TProfilerAssert(now >= fParent->fStartTicks);
+      if (GetParent()->fReferenceCount == 0) {
+         TProfilerAssert(now >= GetParent()->fStartTicks);
          // Use '<' and not '>=' due to man 3 timeradd recommandation
-         TProfilerAssert(!timercmp(&current.ru_utime, &fParent->fStartTime.fUserTime, <));
-         TProfilerAssert(!timercmp(&current.ru_stime, &fParent->fStartTime.fKernelTime, <));
+         TProfilerAssert(!timercmp(&current.ru_utime, &GetParent()->fStartTime.fUserTime, <));
+         TProfilerAssert(!timercmp(&current.ru_stime, &GetParent()->fStartTime.fKernelTime, <));
 
          // Update ticks count
-         fParent->fTotalTicks += (now - fParent->fStartTicks);
+         GetParent()->fTotalTicks += (now - GetParent()->fStartTicks);
          // Update user time
-         timersub(&current.ru_utime, &fParent->fStartTime.fUserTime, &total);
-         timeradd(&fParent->fTotalTime.fUserTime, &total, &add);
-         fParent->fTotalTime.fUserTime = add;
+         timersub(&current.ru_utime, &GetParent()->fStartTime.fUserTime, &total);
+         timeradd(&GetParent()->fTotalTime.fUserTime, &total, &add);
+         GetParent()->fTotalTime.fUserTime = add;
          // Update kernel time
-         timersub(&current.ru_stime, &fParent->fStartTime.fKernelTime, &total);
-         timeradd(&fParent->fTotalTime.fKernelTime, &total, &add);
-         fParent->fTotalTime.fKernelTime = add;
-         fParent->fStartTicks = -1;
+         timersub(&current.ru_stime, &GetParent()->fStartTime.fKernelTime, &total);
+         timeradd(&GetParent()->fTotalTime.fKernelTime, &total, &add);
+         GetParent()->fTotalTime.fKernelTime = add;
+         GetParent()->fStartTicks = -1;
 
          // Update CPU on which we ended and update
          if (fWithCoreUsage) {
             TProfilerAssert(procId >= 0);
-             fParent->fCoreUsage[procId]++;
-         } else if (fWithCoreTrack && fParent->fCoresTracks) {
-            TProfilerAssert(procId >= 0 && procId < fParent->fNbProcs);
-            TProfilerAssert(fParent->fCoreUsage[0] >= 0 && fParent->fCoreUsage[0] < fParent->fNbProcs);
-#ifndef __puma && defined _PTHREAD_H
+             GetParent()->fCoreUsage[procId]++;
+         } else if (fWithCoreTrack && GetParent()->fCoresTracks) {
+            TProfilerAssert(procId >= 0 && procId < GetParent()->fNbProcs);
+            TProfilerAssert(GetParent()->fCoreUsage[0] >= 0 && GetParent()->fCoreUsage[0] < GetParent()->fNbProcs);
+#if !defined(__puma) && defined _PTHREAD_H
             threadId = GetThreadId();
             TProfilerAssert(threadId < fThreadsId.size());
             // Line is starting core, row is ending core
-            matrixId = fParent->fCoreUsage[threadId] * fParent->fNbProcs + procId;
+            matrixId = GetParent()->fCoreUsage[threadId] * GetParent()->fNbProcs + procId;
 #else
-            matrixId = fParent->fCoreUsage[0] * fParent->fNbProcs + procId;
+            matrixId = GetParent()->fCoreUsage[0] * GetParent()->fNbProcs + procId;
 #endif
-            fParent->fCoresTracks[matrixId]++;
+            GetParent()->fCoresTracks[matrixId]++;
          }
 
          // Decrease level
-         --fLevel;
+         --GetLevel();
          // Change parent
-         fParent = fParent->fParent;
+         GetParent() = GetParent()->fParent;
       }
 
-#ifndef __puma && defined _PTHREAD_H
+#if !defined(__puma) && defined _PTHREAD_H
       pthread_mutex_unlock(&fBigLock);
 #endif
    }
 
+
+   advice execution(thread_create()) : around() {
+      unsigned long threadId;
+
+#if !defined(__puma) && defined _PTHREAD_H
+      // Get current thread ID
+      threadId = GetThreadId();
+      // First, lock the create lock, to ensure that we have only one thread
+      // creation at a time, to keep track of the caller
+      pthread_mutex_lock(&fCreateLock);
+      // Store the ID of the thread creator
+      fThreadCreator = GetParent();
+      // And store the level of the current thread
+      fCreationLevel = GetLevel();
+#endif
+
+      // Finally create thread
+      JoinPoint::proceed();
+
+#if !defined(__puma) && defined _PTHREAD_H
+      // Release lock
+      pthread_mutex_unlock(&fCreateLock);
+#endif
+   }
+
    TProfiler() {
+      fFormat = kStdOut;
+#if !defined(__puma) && defined _PTHREAD_H
+      fLevel.resize(0, 0);
+      fParent.resize(0, 0);
+      pthread_mutex_init(&fBigLock, 0);
+      pthread_mutex_init(&fCreateLock, 0);
+#else
       fLevel = 0;
       fParent = 0;
-      fFormat = kStdOut;
-#ifndef __puma && defined _PTHREAD_H
-      pthread_mutex_init(&fBigLock, 0);
 #endif
    }
 
    ~TProfiler() {
-#ifndef __puma && defined _PTHREAD_H
+#if !defined(__puma) && defined _PTHREAD_H
       pthread_mutex_lock(&fBigLock);
 #endif
 
-      TProfilerAssert(fLevel == 0);
+      //TProfilerAssert(fLevel == 0);
       TProfilerAssert(!fCalls.empty());
 
       if (fFormat == kStdOut) {
@@ -604,17 +668,31 @@ aspect TProfiler {
 
       delete fNewArgv;
 
-#ifndef __puma && defined _PTHREAD_H
+#if !defined(__puma) && defined _PTHREAD_H
+      pthread_mutex_destroy(&fCreateLock);
       pthread_mutex_unlock(&fBigLock);
       pthread_mutex_destroy(&fBigLock);
 #endif
    }
 
+#if !defined(__puma) && defined _PTHREAD_H
+   static int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                             void *(*start_routine) (void *), void *arg) {
+      // Just create the thread
+      // Everything will have been done in the aspect
+      return pthread_create(thread, attr, start_routine, arg);
+   }
+#endif
+
 private:
    void InternalAssert(const char * file, unsigned int line, const char * function, const char * expression) {
       std::cerr << file << ":" << line << ": " << function << ": Assertion `" << expression << "' failed." << std::endl;
+#if !defined(__puma) && defined _PTHREAD_H
+      // XXX: The assert has to be threads aware!
+#else
       std::cerr << "Current level: " << fLevel << std::endl;
       std::cerr << "Current parent: " << fParent << std::endl;
+#endif
       std::cerr << "Call tree size: " << fCalls.size() << std::endl;
       for (unsigned int i = 0; i < fCalls.size(); ++i) {
          TCallInfo * child = fCalls[i];
@@ -640,8 +718,13 @@ private:
    }
 
    std::vector<TCallInfo *> fCalls;
+#if !defined(__puma) && defined _PTHREAD_H
+   std::vector<unsigned int> fLevel;
+   std::vector<TCallInfo *> fParent;
+#else
    unsigned int fLevel;
    TCallInfo * fParent;
+#endif
    int fOldArgc;
    char ** fOldArgv;
    char ** fNewArgv;
@@ -649,7 +732,7 @@ private:
    bool fWithCoreUsage;
    bool fWithCoreTrack;
 
-#ifndef __puma && defined _PTHREAD_H
+#if !defined(__puma) && defined _PTHREAD_H
    struct TThreadsCompare {
       bool operator() (const pthread_t & t1, const pthread_t & t2) const {
          return (pthread_equal(t1, t2) != 0);
@@ -673,6 +756,9 @@ private:
    }
 
    pthread_mutex_t fBigLock;
+   void * fThreadCreator;
+   unsigned int fCreationLevel;
+   pthread_mutex_t fCreateLock;
    std::set<pthread_t, TThreadsCompare> fThreadsId;
 #endif
 };
