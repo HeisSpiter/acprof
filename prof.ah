@@ -377,8 +377,6 @@ aspect TProfiler {
    }
 
    ~TProfiler() {
-      unsigned long maxProc;
-
 #ifndef __puma && defined _PTHREAD_H
       pthread_mutex_lock(&fBigLock);
 #endif
