@@ -16,6 +16,10 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/resource.h>
+#ifdef ACPROF_WITH_MULTITHREAD
+#include <pthread.h>
+#include <semaphore.h>
+#endif
 
 struct TTimeInfo {
    timeval fUserTime;
@@ -61,7 +65,7 @@ enum EOutput {
    kOutputMax
 };
 
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
 #define GetParent() fParent[threadId]
 #define GetLevel() fLevel[threadId]
 #else
@@ -75,7 +79,9 @@ aspect TProfiler {
    pointcut functions() = "% ...::%(...)";
    pointcut mainargs() = "% main(int, char**)";
    pointcut profiler() = "% TProfiler::%(...)";
+#ifdef ACPROF_WITH_MULTITHREAD
    pointcut thread_create() = "% TProfiler::pthread_create(...)";
+#endif
 
    advice execution(mainargs()) : before() {
       int * argc = (int *)tjp->arg(0);
@@ -160,12 +166,12 @@ aspect TProfiler {
       const long nbProcs = sysconf(_SC_NPROCESSORS_CONF);
       int procId = sched_getcpu();
       rusage current;
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       unsigned long threadId;
 #endif
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
 
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       pthread_mutex_lock(&fBigLock);
 
       threadId = GetThreadId();
@@ -186,11 +192,13 @@ aspect TProfiler {
           // That's a bit tricky, but the best way to know
           // if a function has started a mutex is to attempt
           // to lock data
-          // XXX: Doesn't link?!
-          //TProfilerAssert(pthread_mutex_trylock(&gTProfiler_fCreateLock) < 0);
+          TProfilerAssert(pthread_mutex_trylock(&fCreateLock) < 0);
           // Then, properly initialize our data
           GetLevel() = fCreationLevel;
           GetParent() = (TCallInfo *)fThreadCreator;
+
+          // We're done with data: the mutex can be released
+          sem_post(fReleaseLock);
       }
 #endif
 
@@ -223,7 +231,7 @@ aspect TProfiler {
                      if (fWithCoreTrack) {
                         // When that feature is enabled, we have more than one core
                         TProfilerAssert(nbProcs > 1);
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
                         child->fCoreUsage.resize(fThreadsId.size(), 0);
                         child->fCoreUsage[threadId] = procId;
 #else
@@ -253,7 +261,7 @@ aspect TProfiler {
                   child->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
                   memset(child->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
                   child->fNbProcs = nbProcs;
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
                   child->fCoreUsage.resize(fThreadsId.size(), 0);
                   child->fCoreUsage[threadId] = procId;
 #else
@@ -287,7 +295,7 @@ aspect TProfiler {
          // If no parent -> level == 0
          TProfilerAssert(GetLevel() == 0);
          // Also means no child - if on main()
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
 	TProfilerAssert(threadId != 0 || fCalls.size() == 0);
 #else
 	TProfilerAssert(fCalls.size() == 0);
@@ -309,7 +317,7 @@ aspect TProfiler {
             GetParent()->fCoresTracks = (unsigned long *)operator new(sizeof(unsigned long) * nbProcs * nbProcs);
             memset(GetParent()->fCoresTracks, 0, sizeof(unsigned long) * nbProcs * nbProcs);
             GetParent()->fNbProcs = nbProcs;
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
             GetParent()->fCoreUsage.resize(fThreadsId.size(), 0);
             GetParent()->fCoreUsage[threadId] = procId;
 #else
@@ -322,7 +330,7 @@ aspect TProfiler {
          ++GetLevel();
       }
 
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       pthread_mutex_unlock(&fBigLock);
 #endif
    }
@@ -335,11 +343,11 @@ aspect TProfiler {
       int procId = sched_getcpu();
       TProfilerAssert(getrusage(RUSAGE_SELF, &current) == 0);
       unsigned long matrixId;
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       unsigned long threadId;
 #endif
 
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       threadId = GetThreadId();
 
       pthread_mutex_lock(&fBigLock);
@@ -380,7 +388,7 @@ aspect TProfiler {
          } else if (fWithCoreTrack && GetParent()->fCoresTracks) {
             TProfilerAssert(procId >= 0 && procId < GetParent()->fNbProcs);
             TProfilerAssert(GetParent()->fCoreUsage[0] >= 0 && GetParent()->fCoreUsage[0] < GetParent()->fNbProcs);
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
             threadId = GetThreadId();
             TProfilerAssert(threadId < fThreadsId.size());
             // Line is starting core, row is ending core
@@ -397,16 +405,18 @@ aspect TProfiler {
          GetParent() = GetParent()->fParent;
       }
 
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       pthread_mutex_unlock(&fBigLock);
 #endif
    }
 
-
+// XXX: Commented out because for whatever reason, C++ generated
+// that way is wrong and cannot be built by G++
+#if 0
+#ifdef ACPROF_WITH_MULTITHREAD
    advice execution(thread_create()) : around() {
       unsigned long threadId;
 
-#if !defined(__puma) && defined _PTHREAD_H
       // Get current thread ID
       threadId = GetThreadId();
       // First, lock the create lock, to ensure that we have only one thread
@@ -416,24 +426,57 @@ aspect TProfiler {
       fThreadCreator = GetParent();
       // And store the level of the current thread
       fCreationLevel = GetLevel();
-#endif
+      // Initialise the semaphore
+      sem_init(fReleaseLock, 0, 0);
 
       // Finally create thread
       JoinPoint::proceed();
 
-#if !defined(__puma) && defined _PTHREAD_H
+      // Wait untill data has been read
+      sem_wait(fReleaseLock);
+      // Destroy semaphore
+      sem_destroy(fReleaseLock);
       // Release lock
       pthread_mutex_unlock(&fCreateLock);
-#endif
    }
+#endif
+#else
+#ifdef ACPROF_WITH_MULTITHREAD
+   advice execution(thread_create()) : before() {
+      unsigned long threadId;
+
+      // Get current thread ID
+      threadId = GetThreadId();
+      // First, lock the create lock, to ensure that we have only one thread
+      // creation at a time, to keep track of the caller
+      pthread_mutex_lock(&fCreateLock);
+      // Store the ID of the thread creator
+      fThreadCreator = GetParent();
+      // And store the level of the current thread
+      fCreationLevel = GetLevel();
+      // Initialise the semaphore
+      sem_init(fReleaseLock, 0, 0);
+   }
+
+   advice execution(thread_create()) : after() {
+      // Wait untill data has been read
+      sem_wait(fReleaseLock);
+      // Destroy semaphore
+      sem_destroy(fReleaseLock);
+      // Release lock
+      pthread_mutex_unlock(&fCreateLock);
+   }
+#endif
+#endif
 
    TProfiler() {
       fFormat = kStdOut;
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       fLevel.resize(0, 0);
       fParent.resize(0, 0);
       pthread_mutex_init(&fBigLock, 0);
       pthread_mutex_init(&fCreateLock, 0);
+      fReleaseLock = new sem_t;
 #else
       fLevel = 0;
       fParent = 0;
@@ -441,7 +484,7 @@ aspect TProfiler {
    }
 
    ~TProfiler() {
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       pthread_mutex_lock(&fBigLock);
 #endif
 
@@ -668,14 +711,15 @@ aspect TProfiler {
 
       delete fNewArgv;
 
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       pthread_mutex_destroy(&fCreateLock);
+      delete fReleaseLock;
       pthread_mutex_unlock(&fBigLock);
       pthread_mutex_destroy(&fBigLock);
 #endif
    }
 
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
    static int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                              void *(*start_routine) (void *), void *arg) {
       // Just create the thread
@@ -687,7 +731,7 @@ aspect TProfiler {
 private:
    void InternalAssert(const char * file, unsigned int line, const char * function, const char * expression) {
       std::cerr << file << ":" << line << ": " << function << ": Assertion `" << expression << "' failed." << std::endl;
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
       // XXX: The assert has to be threads aware!
 #else
       std::cerr << "Current level: " << fLevel << std::endl;
@@ -718,7 +762,7 @@ private:
    }
 
    std::vector<TCallInfo *> fCalls;
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
    std::vector<unsigned int> fLevel;
    std::vector<TCallInfo *> fParent;
 #else
@@ -732,7 +776,7 @@ private:
    bool fWithCoreUsage;
    bool fWithCoreTrack;
 
-#if !defined(__puma) && defined _PTHREAD_H
+#ifdef ACPROF_WITH_MULTITHREAD
    struct TThreadsCompare {
       bool operator() (const pthread_t & t1, const pthread_t & t2) const {
          return (pthread_equal(t1, t2) != 0);
@@ -759,6 +803,7 @@ private:
    void * fThreadCreator;
    unsigned int fCreationLevel;
    pthread_mutex_t fCreateLock;
+   sem_t * fReleaseLock;
    std::set<pthread_t, TThreadsCompare> fThreadsId;
 #endif
 };
