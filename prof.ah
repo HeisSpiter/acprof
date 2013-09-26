@@ -50,13 +50,13 @@ struct TCallInfo {
    clock_t fStartTicks;
    TTimeInfo fStartTime;
    unsigned long fReferenceCount;
-   std::set<TCallInfo *> fChildren;
+   TCallInfo * fChildren;
    std::vector<unsigned long> fCoreUsage;
    unsigned long * fCoresTracks;
    unsigned long fNbProcs;
    TCallInfo(TCallInfo * parent, TCallInfo * neighbor, const std::string & function, const std::string & file, int line, clock_t startTicks, const timeval & userTime, const timeval & kernelTime) :
       fParent(parent), fNeighbor(neighbor), fFunction(function), fFile(file), fLine(line), fCalls(1), fTotalTicks(0), fStartTicks(startTicks),
-      fReferenceCount(1), fCoresTracks(0), fNbProcs(0) { timerclear(&fTotalTime.fUserTime); timerclear(&fTotalTime.fKernelTime); fStartTime.fUserTime = userTime; fStartTime.fKernelTime = kernelTime; };
+      fReferenceCount(1), fChildren(0), fCoresTracks(0), fNbProcs(0) { timerclear(&fTotalTime.fUserTime); timerclear(&fTotalTime.fKernelTime); fStartTime.fUserTime = userTime; fStartTime.fKernelTime = kernelTime; };
 };
 
 enum EOutput {
@@ -278,7 +278,10 @@ aspect TProfiler {
                }
 
                // Ensure parent has child
-               GetParent()->fChildren.insert(child);
+               if (GetParent()->fChildren == 0)
+               {
+                   GetParent()->fChildren = child;
+               }
             }
 
             // In any case, jump level
@@ -505,7 +508,7 @@ aspect TProfiler {
                TProfilerAssert(child->fTotalTicks >= previousTicks);
 
                // No child -> display and head back
-               if (child->fChildren.empty()) {
+               if (child->fChildren == 0) {
                   TCallInfo * parent = child;
                   while (parent != 0) {
                      std::cout << parent->fFunction;
@@ -676,8 +679,7 @@ aspect TProfiler {
                outFile << totalTime << std::endl;
 
                // Then display each of the callee
-               for (std::set<TCallInfo *>::const_iterator it = child->fChildren.begin(); it != child->fChildren.end(); ++it) {
-                  TCallInfo * callee = (*it);
+               for (TCallInfo * callee = child->fChildren; callee != 0; callee = callee->fNeighbor) {
                   outFile << "cfl=" << callee->fFile << std::endl;
                   outFile << "cfn=" << callee->fFunction << std::endl;
                   outFile << "calls=" << callee->fCalls << std::endl;
@@ -751,8 +753,7 @@ private:
             for (unsigned int j = 0; j < child->fCoreUsage.size(); ++j) {
                std::cerr << "\tCoreUsage (" << j << "): " << child->fCoreUsage[j] << std::endl;
             }
-            for (std::set<TCallInfo *>::const_iterator it = child->fChildren.begin(); it != child->fChildren.end(); ++it) {
-               TCallInfo * callee = (*it);
+            for (TCallInfo * callee = child->fChildren; callee != 0; callee = callee->fNeighbor) {
                std::cerr << "\t\tCallee: " << callee << std::endl;
             }
             std::cerr << "\tNbProcs: " << child->fNbProcs << std::endl;
